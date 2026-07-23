@@ -43,4 +43,19 @@ final class IpBlocklistTest extends TestCase
 
         $this->assertFalse($blocklist->isBlocked('203.0.113.5'));
     }
+
+    public function testMalformedCidrPrefixDoesNotBlockEverything(): void
+    {
+        $blocklist = new IpBlocklist(['198.51.100.0/oops']);
+
+        $this->assertFalse($blocklist->isBlocked('203.0.113.5'));
+    }
+
+    public function testNonOctetAlignedCidrPrefixMatchesCorrectly(): void
+    {
+        $blocklist = new IpBlocklist(['198.51.100.0/28']);
+
+        $this->assertTrue($blocklist->isBlocked('198.51.100.5'));
+        $this->assertFalse($blocklist->isBlocked('198.51.100.20'));
+    }
 }

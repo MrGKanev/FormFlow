@@ -42,9 +42,13 @@ final class IpBlocklist
             return false;
         }
 
+        if (!ctype_digit($prefixLength)) {
+            return false;
+        }
+
         $prefixLength = (int) $prefixLength;
 
-        if ($prefixLength < 0 || $prefixLength > 32) {
+        if ($prefixLength > 32) {
             return false;
         }
 
