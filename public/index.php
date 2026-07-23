@@ -55,20 +55,20 @@ if (!str_starts_with($databasePath, '/')) {
     $databasePath = $root . '/' . ltrim($databasePath, '/');
 }
 
-$handler = new FormHandler(
-    $forms,
-    new MailService(
-        getenv('MAILER_DSN') ?: '',
-        getenv('MAIL_FROM') ?: '',
-        getenv('MAIL_FROM_NAME') ?: 'formflow'
-    ),
-    new SqliteSubmissionRepository($databasePath),
-    new Turnstile(getenv('TURNSTILE_SECRET') ?: ''),
-    new SqliteRateLimiter($databasePath),
-    getenv('IP_HASH_SECRET') ?: 'change-me'
-);
-
 try {
+    $handler = new FormHandler(
+        $forms,
+        new MailService(
+            getenv('MAILER_DSN') ?: '',
+            getenv('MAIL_FROM') ?: '',
+            getenv('MAIL_FROM_NAME') ?: 'formflow'
+        ),
+        new SqliteSubmissionRepository($databasePath),
+        new Turnstile(getenv('TURNSTILE_SECRET') ?: ''),
+        new SqliteRateLimiter($databasePath),
+        getenv('IP_HASH_SECRET') ?: 'change-me'
+    );
+
     $result = $handler->handle($formId);
 
     http_response_code($result['status']);
