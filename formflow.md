@@ -1435,6 +1435,8 @@ Turnstile token-ът винаги се валидира server-side.
 
 Rate limiting е по-добре да бъде на Nginx или Cloudflare ниво, вместо да се пише допълнителна PHP логика.
 
+**Важно за reverse proxy:** IP-базираните защити на formflow (rate limiting по IP, IP blocklist, месечният IP hash) четат директно `$_SERVER['REMOTE_ADDR']`. Ако сайтът е зад Cloudflare или друг reverse proxy, това поле показва IP-то на proxy-то, не на реалния клиент — всички заявки изглеждат като идващи от един и същ адрес, което прави IP-базираните защити неефективни (един общ rate limit "bucket" за всички посетители, блокирането на конкретен нападател през IP blocklist вече не работи). За версия 1 това не се коригира в кода — при deploy зад Cloudflare/nginx трябва да се настрои `real_ip`/`CF-Connecting-IP` на ниво Nginx, за да получава PHP реалния клиентски IP в `REMOTE_ADDR`.
+
 ### Allowed fields
 
 formflow не изпраща директно цялото `$_POST`.
@@ -1620,6 +1622,7 @@ php bin/formflow stats
 - [ ] Failed submission остава в SQLite.
 - [ ] Backup на SQLite е настроен.
 - [ ] Privacy policy е актуализирана.
+- [ ] Ако сайтът е зад Cloudflare/nginx reverse proxy, `REMOTE_ADDR` показва proxy IP-то, не реалния клиентски IP — настроен е `real_ip`/`CF-Connecting-IP` на ниво Nginx, за да работят коректно IP blocklist-ът, rate limiting-ът и IP hash-a (виж бележката в "Основни защити" по-долу).
 
 ---
 

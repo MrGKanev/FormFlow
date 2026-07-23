@@ -63,6 +63,8 @@ Allowed origins/referer, honeypot поле (`_website`), Cloudflare Turnstile, p
 
 Пълните детайли, редът на проверките и HTTP кодовете за всеки случай са в [`formflow.md`](formflow.md#допълнение-към-плана--решения-за-v1-storage--защити).
 
+**Reverse proxy:** IP-базираните защити (rate limiting, IP blocklist, IP hash) четат `REMOTE_ADDR` директно. Зад Cloudflare/nginx това е proxy IP-то, не реалният клиент — настрой `real_ip`/`CF-Connecting-IP` на ниво Nginx, иначе тези защити не работят коректно.
+
 ## Production deployment
 
 Nginx/Apache конфигурация, права за `storage/`, backup, GDPR препоръки — виж [`formflow.md`](formflow.md).
