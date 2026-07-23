@@ -43,6 +43,8 @@ curl -X POST http://localhost:8080/contact \
     -F "message=Test submission"
 ```
 
+По подразбиране `contact` има `'turnstile' => true`, а горната команда не подава `cf-turnstile-response` — очаквай `422 Turnstile validation failed`. За локален smoke test без реален Cloudflare token временно смени на `'turnstile' => false` в `config/forms.php`, или подай валиден token, получен от истински widget.
+
 ## Тестове
 
 ```bash
