@@ -3,3 +3,4 @@
 /storage/*.sqlite
 /storage/*.sqlite-shm
 /storage/*.sqlite-wal
+/.phpunit.result.cache
