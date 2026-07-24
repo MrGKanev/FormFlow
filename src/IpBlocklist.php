@@ -6,58 +6,18 @@ namespace formflow;
 
 final class IpBlocklist
 {
+    private readonly IpMatcher $matcher;
+
     /** @param list<string> $blockedIps */
     public function __construct(
-        private readonly array $blockedIps
+        private readonly array $blockedIps,
+        ?IpMatcher $matcher = null
     ) {
+        $this->matcher = $matcher ?? new IpMatcher();
     }
 
     public function isBlocked(string $ip): bool
     {
-        foreach ($this->blockedIps as $entry) {
-            if (str_contains($entry, '/')) {
-                if ($this->ipInCidr($ip, $entry)) {
-                    return true;
-                }
-
-                continue;
-            }
-
-            if ($entry === $ip) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private function ipInCidr(string $ip, string $cidr): bool
-    {
-        [$subnet, $prefixLength] = explode('/', $cidr, 2);
-
-        $ipLong = ip2long($ip);
-        $subnetLong = ip2long($subnet);
-
-        if ($ipLong === false || $subnetLong === false) {
-            return false;
-        }
-
-        if (!ctype_digit($prefixLength)) {
-            return false;
-        }
-
-        $prefixLength = (int) $prefixLength;
-
-        if ($prefixLength > 32) {
-            return false;
-        }
-
-        if ($prefixLength === 0) {
-            return true;
-        }
-
-        $mask = -1 << (32 - $prefixLength);
-
-        return ($ipLong & $mask) === ($subnetLong & $mask);
+        return $this->matcher->matches($ip, $this->blockedIps);
     }
 }
