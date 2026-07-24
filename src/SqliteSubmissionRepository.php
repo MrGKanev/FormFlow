@@ -102,6 +102,62 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         return $row === false ? null : $row;
     }
 
+    public function findPaginated(?string $formId, ?string $status, int $page, int $perPage): array
+    {
+        [$where, $params] = $this->buildFilter($formId, $status);
+
+        $page = max(1, $page);
+        $perPage = max(1, $perPage);
+        $offset = ($page - 1) * $perPage;
+
+        $statement = $this->pdo->prepare(
+            'SELECT * FROM submissions' . $where . '
+             ORDER BY created_at DESC, id DESC
+             LIMIT :limit OFFSET :offset'
+        );
+
+        foreach ($params as $key => $value) {
+            $statement->bindValue(':' . $key, $value, PDO::PARAM_STR);
+        }
+
+        $statement->bindValue(':limit', $perPage, PDO::PARAM_INT);
+        $statement->bindValue(':offset', $offset, PDO::PARAM_INT);
+        $statement->execute();
+
+        return $statement->fetchAll();
+    }
+
+    public function count(?string $formId, ?string $status): int
+    {
+        [$where, $params] = $this->buildFilter($formId, $status);
+
+        $statement = $this->pdo->prepare('SELECT COUNT(*) AS total FROM submissions' . $where);
+        $statement->execute($params);
+
+        return (int) $statement->fetch()['total'];
+    }
+
+    /** @return array{0: string, 1: array<string, string>} */
+    private function buildFilter(?string $formId, ?string $status): array
+    {
+        $conditions = [];
+        $params = [];
+
+        if ($formId !== null) {
+            $conditions[] = 'form_id = :form_id';
+            $params['form_id'] = $formId;
+        }
+
+        if ($status !== null) {
+            $conditions[] = 'status = :status';
+            $params['status'] = $status;
+        }
+
+        $where = $conditions === [] ? '' : ' WHERE ' . implode(' AND ', $conditions);
+
+        return [$where, $params];
+    }
+
     private function createSchema(): void
     {
         $this->pdo->exec(

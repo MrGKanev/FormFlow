@@ -20,4 +20,9 @@ interface SubmissionRepositoryInterface
 
     /** @return array<string, mixed>|null */
     public function find(int $submissionId): ?array;
+
+    /** @return list<array<string, mixed>> */
+    public function findPaginated(?string $formId, ?string $status, int $page, int $perPage): array;
+
+    public function count(?string $formId, ?string $status): int;
 }

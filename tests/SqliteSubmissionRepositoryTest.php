@@ -66,4 +66,72 @@ final class SqliteSubmissionRepositoryTest extends TestCase
 
         $this->assertNull($repository->find(999));
     }
+
+    public function testFindPaginatedReturnsMostRecentFirst(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+
+        $repository->create('contact', ['n' => '1'], null);
+        $repository->create('contact', ['n' => '2'], null);
+        $repository->create('contact', ['n' => '3'], null);
+
+        $rows = $repository->findPaginated(null, null, 1, 2);
+
+        $this->assertCount(2, $rows);
+        $this->assertSame(3, $rows[0]['id']);
+        $this->assertSame(2, $rows[1]['id']);
+    }
+
+    public function testFindPaginatedSecondPageReturnsRemainder(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+
+        $repository->create('contact', ['n' => '1'], null);
+        $repository->create('contact', ['n' => '2'], null);
+        $repository->create('contact', ['n' => '3'], null);
+
+        $rows = $repository->findPaginated(null, null, 2, 2);
+
+        $this->assertCount(1, $rows);
+        $this->assertSame(1, $rows[0]['id']);
+    }
+
+    public function testFindPaginatedFiltersByFormId(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+
+        $repository->create('contact', [], null);
+        $repository->create('support', [], null);
+
+        $rows = $repository->findPaginated('support', null, 1, 10);
+
+        $this->assertCount(1, $rows);
+        $this->assertSame('support', $rows[0]['form_id']);
+    }
+
+    public function testFindPaginatedFiltersByStatus(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+
+        $repository->create('contact', [], null, 'blocked_spam');
+        $repository->create('contact', [], null, 'received');
+
+        $rows = $repository->findPaginated(null, 'blocked_spam', 1, 10);
+
+        $this->assertCount(1, $rows);
+        $this->assertSame('blocked_spam', $rows[0]['status']);
+    }
+
+    public function testCountRespectsFilters(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+
+        $repository->create('contact', [], null, 'received');
+        $repository->create('contact', [], null, 'blocked_spam');
+        $repository->create('support', [], null, 'received');
+
+        $this->assertSame(3, $repository->count(null, null));
+        $this->assertSame(2, $repository->count('contact', null));
+        $this->assertSame(1, $repository->count(null, 'blocked_spam'));
+    }
 }
