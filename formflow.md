@@ -1623,6 +1623,9 @@ php bin/formflow stats
 - [ ] Backup на SQLite е настроен.
 - [ ] Privacy policy е актуализирана.
 - [ ] Ако сайтът е зад Cloudflare/nginx reverse proxy, `REMOTE_ADDR` показва proxy IP-то, не реалния клиентски IP — настроен е `real_ip`/`CF-Connecting-IP` на ниво Nginx, за да работят коректно IP blocklist-ът, rate limiting-ът и IP hash-a (виж бележката в "Основни защити" по-долу).
+- [ ] `ADMIN_USERNAME` и `ADMIN_PASSWORD_HASH` са зададени в `.env` (генерирани с `php -r "echo password_hash('...', PASSWORD_DEFAULT), PHP_EOL;"`).
+- [ ] `config/admin.php` → `allowed_ips` съдържа реалния IP на оператора.
+- [ ] Ако инсталацията е зад Cloudflare/nginx, `real_ip`/`CF-Connecting-IP` е настроен и за admin IP whitelist-а (същото изискване като за IP blocklist-а по-горе).
 
 ---
 

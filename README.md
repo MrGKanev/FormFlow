@@ -45,6 +45,25 @@ curl -X POST http://localhost:8080/contact \
 
 По подразбиране `contact` има `'turnstile' => true`, а горната команда не подава `cf-turnstile-response` — очаквай `422 Turnstile validation failed`. За локален smoke test без реален Cloudflare token временно смени на `'turnstile' => false` в `config/forms.php`, или подай валиден token, получен от истински widget.
 
+## Admin panel
+
+Минимален admin панел за преглед на submissions, защитен с login + IP whitelist.
+
+Routes:
+
+- `/admin` — dashboard с пагинирани submissions (филтри по форма и статус).
+- `/admin/login` — login форма.
+- `/admin/logout` — logout, redirect към `/admin/login`.
+- `/admin/submissions/{id}` — детайли за конкретен submission.
+- `/admin/whitelist` — управление на IP whitelist-а за admin панела (добавяне/премахване на IP/CIDR записи).
+
+Изисква:
+
+- `ADMIN_USERNAME` и `ADMIN_PASSWORD_HASH` в `.env` (хешът се генерира с `php -r "echo password_hash('...', PASSWORD_DEFAULT), PHP_EOL;"`).
+- Поне един IP (или CIDR) в `config/admin.php` → `allowed_ips`, или запис в динамичния whitelist (таблицата `admin_ip_whitelist` в SQLite, управлявана през `/admin/whitelist`).
+
+За пълната дизайн обосновка виж [`docs/superpowers/specs/2026-07-24-admin-panel-design.md`](docs/superpowers/specs/2026-07-24-admin-panel-design.md).
+
 ## Тестове
 
 ```bash
@@ -68,3 +87,16 @@ Allowed origins/referer, honeypot поле (`_website`), Cloudflare Turnstile, p
 ## Production deployment
 
 Nginx/Apache конфигурация, права за `storage/`, backup, GDPR препоръки — виж [`formflow.md`](formflow.md).
+
+## Alternatives
+
+If you want a more feature-rich solution, consider:
+
+### Self-hosted
+
+- [FormLander](https://github.com/karloscodes/formlander) - Go backend, more features, but not PHP friendly and needs Docker for easier deployment.
+
+### Hosted
+
+- [Web3Forms](https://web3forms.com/) — hosted, free tier, more features.
+- [Formspree](https://formspree.io/) — hosted, free tier, more features.

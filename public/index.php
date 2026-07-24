@@ -2,9 +2,13 @@
 
 declare(strict_types=1);
 
+use formflow\Admin\AdminController;
+use formflow\AdminAuth;
+use formflow\AdminIpWhitelist;
 use formflow\FormHandler;
 use formflow\IpBlocklist;
 use formflow\MailService;
+use formflow\SqliteAdminWhitelistRepository;
 use formflow\SqliteRateLimiter;
 use formflow\SqliteSubmissionRepository;
 use formflow\Turnstile;
@@ -33,6 +37,48 @@ if ($formId === 'health') {
     exit;
 }
 
+$databasePath = getenv('DATABASE_PATH') ?: 'storage/submissions.sqlite';
+
+if (!str_starts_with($databasePath, '/')) {
+    $databasePath = $root . '/' . ltrim($databasePath, '/');
+}
+
+$ipHashSecret = getenv('IP_HASH_SECRET') ?: 'change-me';
+
+if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
+    $adminConfig = require $root . '/config/admin.php';
+    $allowedIps = $adminConfig['allowed_ips'] ?? [];
+    $whitelistRepository = new SqliteAdminWhitelistRepository($databasePath);
+
+    $adminController = new AdminController(
+        new AdminAuth(
+            getenv('ADMIN_USERNAME') ?: 'admin',
+            getenv('ADMIN_PASSWORD_HASH') ?: '',
+            new SqliteRateLimiter($databasePath),
+            (int) ($adminConfig['login_rate_limit']['max'] ?? 5),
+            (int) ($adminConfig['login_rate_limit']['window_minutes'] ?? 15)
+        ),
+        new AdminIpWhitelist($allowedIps, $whitelistRepository),
+        new SqliteSubmissionRepository($databasePath),
+        $whitelistRepository,
+        $allowedIps,
+        $ipHashSecret
+    );
+
+    $result = $adminController->handle($formId);
+
+    http_response_code($result['status']);
+
+    if (!empty($result['redirect'])) {
+        header('Location: ' . $result['redirect'], true, 302);
+        exit;
+    }
+
+    header('Content-Type: text/html; charset=utf-8');
+    echo $result['body'];
+    exit;
+}
+
 $security = require $root . '/config/security.php';
 $blocklist = new IpBlocklist($security['blocked_ips'] ?? []);
 
@@ -49,12 +95,6 @@ if (is_string($clientIp) && $blocklist->isBlocked($clientIp)) {
 
 $forms = require $root . '/config/forms.php';
 
-$databasePath = getenv('DATABASE_PATH') ?: 'storage/submissions.sqlite';
-
-if (!str_starts_with($databasePath, '/')) {
-    $databasePath = $root . '/' . ltrim($databasePath, '/');
-}
-
 try {
     $handler = new FormHandler(
         $forms,
@@ -66,7 +106,7 @@ try {
         new SqliteSubmissionRepository($databasePath),
         new Turnstile(getenv('TURNSTILE_SECRET') ?: ''),
         new SqliteRateLimiter($databasePath),
-        getenv('IP_HASH_SECRET') ?: 'change-me'
+        $ipHashSecret
     );
 
     $result = $handler->handle($formId);
