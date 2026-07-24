@@ -27,7 +27,7 @@ final class AdminControllerTest extends TestCase
     protected function tearDown(): void
     {
         if (session_status() === PHP_SESSION_ACTIVE) {
-            session_write_close();
+            session_destroy();
         }
 
         $_SESSION = [];
@@ -73,6 +73,15 @@ final class AdminControllerTest extends TestCase
         $controller = $this->makeController(['198.51.100.1']);
 
         $result = $controller->handle('admin');
+
+        $this->assertSame(403, $result['status']);
+    }
+
+    public function testNonWhitelistedIpReturns403EvenForLoginRoute(): void
+    {
+        $controller = $this->makeController(['198.51.100.1']);
+
+        $result = $controller->handle('admin/login');
 
         $this->assertSame(403, $result['status']);
     }

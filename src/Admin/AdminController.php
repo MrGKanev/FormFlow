@@ -97,6 +97,7 @@ final class AdminController
             return $this->htmlResponse(401, $this->renderLogin('Invalid username or password.'));
         }
 
+        session_regenerate_id(true);
         $this->auth->login();
 
         return ['status' => 302, 'body' => '', 'redirect' => '/admin'];
