@@ -76,25 +76,28 @@ if ($formId === '') {
     <link rel="stylesheet" href="/assets/style.css">
     </head>
     <body>
-    <div class="container">
-        <h1>formflow</h1>
-        <p class="tagline">A minimal, self-hosted form backend for static sites &mdash; no framework required.</p>
-        <ul class="features">
-            <li>Cloudflare Turnstile, honeypot &amp; keyword spam filtering</li>
-            <li>Per-IP and per-form rate limiting, plus a global IP blocklist</li>
-            <li>Admin panel with a per-site <code>_key</code> API key for each form</li>
-        </ul>
-        <div class="links">
+    <main class="container home-shell">
+        <section class="home-hero">
+            <p class="home-kicker">Self-hosted form backend</p>
+            <h1>formflow</h1>
+            <p class="tagline">A clean endpoint for static-site forms with spam controls, rate limits, delivery logs, and per-form API keys.</p>
+            <div class="home-actions">
     HTML;
 
     if ($isLocalhost) {
-        echo '<a href="/admin">Admin panel</a>';
+        echo '<a href="/admin" class="button">Admin panel</a>';
     }
 
     echo <<<'HTML'
-            <a href="/health">Health check</a>
-        </div>
-    </div>
+                <a href="/health" class="button secondary">Health check</a>
+            </div>
+        </section>
+        <ul class="features">
+            <li><strong>Spam control</strong>Turnstile, honeypot checks, keyword filtering, and a global IP blocklist.</li>
+            <li><strong>Rate limits</strong>Per-IP and per-form limits keep noisy forms contained.</li>
+            <li><strong>Admin workflow</strong>Review submissions and rotate a <code>_key</code> for each configured form.</li>
+        </ul>
+    </main>
     </body>
     </html>
     HTML;

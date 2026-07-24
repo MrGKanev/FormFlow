@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 return [
     'allowed_ips' => [
-        // '203.0.113.10',
+        '::1',
     ],
 
     'login_rate_limit' => [

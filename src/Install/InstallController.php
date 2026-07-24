@@ -220,6 +220,7 @@ final class InstallController
             'checks' => $checks,
             'checksPass' => $checksPass,
             'csrfToken' => $_SESSION['csrf_token'],
+            'containerClass' => 'setup',
         ], 'Setup', withNav: false);
     }
 
