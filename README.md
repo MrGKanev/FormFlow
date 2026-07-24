@@ -14,18 +14,6 @@ Minimal self-hosted PHP backend for accepting HTML forms (like Web3Forms/Formspr
 composer install
 ```
 
-If no `.env` file exists yet, every request redirects to `/install` - a
-one-time setup wizard. Only the admin username and password (asked first)
-are required — SMTP details, App URL, and the Cloudflare Turnstile secret
-are all optional and can be left blank, filled in later by editing `.env`
-directly. Email sending won't work until `MAILER_DSN`/`MAIL_FROM` are set,
-but you can finish installing and log into the admin panel without them.
-The wizard writes `.env` and adds your IP to `config/admin.php`'s
-whitelist. `/install` refuses to run again once `.env` exists (`403`), and
-there's nothing to delete afterward - it's a route, not a file. If PHP
-can't write where it needs to, `/install` reports exactly which path(s)
-to fix instead of failing silently.
-
 Alternatively, skip the wizard and configure by hand:
 
 ```bash
@@ -99,42 +87,6 @@ Allowed origins/referer, honeypot field (`_website`), Cloudflare Turnstile, per-
 
 **Reverse proxy:** The IP-based protections (rate limiting, IP blocklist, IP hash) read `REMOTE_ADDR` directly. Behind Cloudflare/nginx this is the proxy's IP, not the real client - set up `real_ip`/`CF-Connecting-IP` at the Nginx level, otherwise these protections do not work correctly.
 
-### storage/ permissions and PHP extensions
-
-```bash
-mkdir -p storage
-touch storage/submissions.sqlite
-
-chown -R www-data:www-data storage
-chmod -R 775 storage
-```
-
-Replace `www-data` if PHP-FPM runs as a different user.
-
-Check that the required extensions are enabled:
-
-```bash
-php -m | grep -E "curl|mbstring|pdo|sqlite"
-```
-
-At minimum, these must be present:
-
-```text
-curl
-mbstring
-PDO
-pdo_sqlite
-sqlite3
-```
-
-Debian/Ubuntu example:
-
-```bash
-sudo apt install \
-    php-curl \
-    php-mbstring \
-    php-sqlite3
-```
 
 ### Backup
 
@@ -171,28 +123,6 @@ sqlite3 storage/submissions.sqlite \
     "DELETE FROM submissions
      WHERE created_at < datetime('now', '-180 days');"
 ```
-
-### Deployment checklist
-
-- [ ] PHP 8.2+ is installed.
-- [ ] `curl`, `mbstring`, `pdo_sqlite`, and `sqlite3` are enabled.
-- [ ] Composer dependencies are installed.
-- [ ] `.env` has real SMTP credentials.
-- [ ] `TURNSTILE_SECRET` is set.
-- [ ] `IP_HASH_SECRET` has been changed from its default.
-- [ ] `forms.php` has the correct domains and recipients.
-- [ ] Document root points to `public/`.
-- [ ] `storage/` is writable by PHP-FPM.
-- [ ] HTTPS is enabled.
-- [ ] Request body size is limited.
-- [ ] Rate limiting is enabled.
-- [ ] `/health` works.
-- [ ] A test email was received.
-- [ ] A failed submission stays recorded in SQLite.
-- [ ] SQLite backup is configured.
-- [ ] Privacy policy is up to date.
-- [ ] If deployed behind Cloudflare/nginx, `real_ip`/`CF-Connecting-IP` is also configured for the admin IP whitelist (same requirement as for the IP blocklist above).
-- [ ] Generate an API key per form from `/admin/api-keys` for any form that should require one.
 
 ## Alternatives
 
