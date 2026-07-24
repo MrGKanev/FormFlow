@@ -30,8 +30,6 @@ return [
 
         'turnstile' => true,
 
-        'api_key' => 'replace-with-a-long-random-value',
-
         'rate_limit_per_ip' => [
             'max' => 5,
             'window_minutes' => 10,

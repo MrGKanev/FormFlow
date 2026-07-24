@@ -7,7 +7,9 @@ namespace formflow\Tests\Admin;
 use formflow\Admin\AdminController;
 use formflow\AdminAuth;
 use formflow\AdminIpWhitelist;
+use formflow\FormApiKeyRepositoryInterface;
 use formflow\SqliteAdminWhitelistRepository;
+use formflow\SqliteFormApiKeyRepository;
 use formflow\SqliteRateLimiter;
 use formflow\SqliteSubmissionRepository;
 use PHPUnit\Framework\TestCase;
@@ -35,11 +37,16 @@ final class AdminControllerTest extends TestCase
         unset($_SERVER['REQUEST_METHOD'], $_SERVER['REMOTE_ADDR']);
     }
 
-    /** @param list<string> $allowedIps */
+    /**
+     * @param list<string> $allowedIps
+     * @param list<string> $formIds
+     */
     private function makeController(
         array $allowedIps = ['203.0.113.10'],
         ?SqliteSubmissionRepository $submissions = null,
-        ?SqliteAdminWhitelistRepository $whitelistRepository = null
+        ?SqliteAdminWhitelistRepository $whitelistRepository = null,
+        ?FormApiKeyRepositoryInterface $apiKeys = null,
+        array $formIds = ['contact', 'support']
     ): AdminController {
         $whitelistRepository ??= new SqliteAdminWhitelistRepository(':memory:');
 
@@ -55,7 +62,9 @@ final class AdminControllerTest extends TestCase
             $submissions ?? new SqliteSubmissionRepository(':memory:'),
             $whitelistRepository,
             $allowedIps,
-            'test-ip-hash-secret'
+            'test-ip-hash-secret',
+            $apiKeys ?? new SqliteFormApiKeyRepository(':memory:'),
+            $formIds
         );
     }
 
@@ -293,5 +302,86 @@ final class AdminControllerTest extends TestCase
 
         $this->assertSame(302, $result['status']);
         $this->assertSame([], $whitelistRepository->list());
+    }
+
+    public function testApiKeysPageListsConfiguredFormsWithoutGeneratedKeys(): void
+    {
+        $controller = $this->makeController();
+        $this->login($controller);
+
+        $result = $controller->handle('admin/api-keys');
+
+        $this->assertSame(200, $result['status']);
+        $this->assertStringContainsString('contact', $result['body']);
+        $this->assertStringContainsString('support', $result['body']);
+        $this->assertStringContainsString('not generated', $result['body']);
+    }
+
+    public function testApiKeysPagePostGeneratesKeyAndRedirects(): void
+    {
+        $apiKeys = new SqliteFormApiKeyRepository(':memory:');
+        $controller = $this->makeController(apiKeys: $apiKeys);
+        $this->login($controller);
+
+        $controller->handle('admin/api-keys');
+        $token = $this->csrfToken();
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = ['form_id' => 'contact', 'csrf_token' => $token];
+
+        $result = $controller->handle('admin/api-keys');
+
+        $this->assertSame(302, $result['status']);
+        $this->assertSame('/admin/api-keys', $result['redirect']);
+        $this->assertNotNull($apiKeys->get('contact'));
+    }
+
+    public function testApiKeysPagePostRegeneratesReplacingPreviousKey(): void
+    {
+        $apiKeys = new SqliteFormApiKeyRepository(':memory:');
+        $firstKey = $apiKeys->regenerate('contact');
+
+        $controller = $this->makeController(apiKeys: $apiKeys);
+        $this->login($controller);
+
+        $controller->handle('admin/api-keys');
+        $token = $this->csrfToken();
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = ['form_id' => 'contact', 'csrf_token' => $token];
+        $controller->handle('admin/api-keys');
+
+        $this->assertNotSame($firstKey, $apiKeys->get('contact'));
+    }
+
+    public function testApiKeysPagePostWithUnknownFormIdReturns422(): void
+    {
+        $controller = $this->makeController();
+        $this->login($controller);
+
+        $controller->handle('admin/api-keys');
+        $token = $this->csrfToken();
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = ['form_id' => 'unknown-form', 'csrf_token' => $token];
+
+        $result = $controller->handle('admin/api-keys');
+
+        $this->assertSame(422, $result['status']);
+    }
+
+    public function testApiKeysPagePostWithoutCsrfTokenReturns419(): void
+    {
+        $apiKeys = new SqliteFormApiKeyRepository(':memory:');
+        $controller = $this->makeController(apiKeys: $apiKeys);
+        $this->login($controller);
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = ['form_id' => 'contact'];
+
+        $result = $controller->handle('admin/api-keys');
+
+        $this->assertSame(419, $result['status']);
+        $this->assertNull($apiKeys->get('contact'));
     }
 }

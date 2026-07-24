@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace formflow\Tests;
 
+use formflow\FormApiKeyRepositoryInterface;
 use formflow\FormHandler;
+use formflow\SqliteFormApiKeyRepository;
 use formflow\SqliteRateLimiter;
 use formflow\SqliteSubmissionRepository;
 use formflow\Tests\Fakes\FakeMailSender;
@@ -54,7 +56,8 @@ final class FormHandlerTest extends TestCase
         ?FakeMailSender $mailSender = null,
         ?FakeTurnstileVerifier $turnstile = null,
         ?SqliteSubmissionRepository $repository = null,
-        ?SqliteRateLimiter $rateLimiter = null
+        ?SqliteRateLimiter $rateLimiter = null,
+        ?FormApiKeyRepositoryInterface $apiKeys = null
     ): FormHandler {
         return new FormHandler(
             $forms,
@@ -62,7 +65,8 @@ final class FormHandlerTest extends TestCase
             $repository ?? new SqliteSubmissionRepository(':memory:'),
             $turnstile ?? new FakeTurnstileVerifier(true),
             $rateLimiter ?? new SqliteRateLimiter(':memory:'),
-            'test-secret'
+            'test-secret',
+            $apiKeys ?? new SqliteFormApiKeyRepository(':memory:')
         );
     }
 
@@ -231,6 +235,22 @@ final class FormHandlerTest extends TestCase
         }
     }
 
+    public function testNoGeneratedApiKeyAllowsSubmission(): void
+    {
+        $_POST = [
+            'name' => 'Ada',
+            'email' => 'ada@example.com',
+            'message' => 'Hello',
+            'cf-turnstile-response' => 'good-token',
+        ];
+
+        $handler = $this->makeHandler(['contact' => $this->contactForm()]);
+
+        $result = $handler->handle('contact');
+
+        $this->assertSame(200, $result['status']);
+    }
+
     public function testApiKeyMismatchThrowsInvalidArgumentException(): void
     {
         $_POST = [
@@ -240,9 +260,17 @@ final class FormHandlerTest extends TestCase
             '_key' => 'wrong-key',
         ];
 
-        $handler = $this->makeHandler([
-            'contact' => $this->contactForm(['api_key' => 'correct-key']),
-        ]);
+        $apiKeys = new SqliteFormApiKeyRepository(':memory:');
+        $apiKeys->regenerate('contact');
+
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm()],
+            null,
+            null,
+            null,
+            null,
+            $apiKeys
+        );
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('Invalid API key.');
@@ -252,17 +280,25 @@ final class FormHandlerTest extends TestCase
 
     public function testApiKeyMatchAllowsSubmission(): void
     {
+        $apiKeys = new SqliteFormApiKeyRepository(':memory:');
+        $correctKey = $apiKeys->regenerate('contact');
+
         $_POST = [
             'name' => 'Ada',
             'email' => 'ada@example.com',
             'message' => 'Hello',
-            '_key' => 'correct-key',
+            '_key' => $correctKey,
             'cf-turnstile-response' => 'good-token',
         ];
 
-        $handler = $this->makeHandler([
-            'contact' => $this->contactForm(['api_key' => 'correct-key']),
-        ]);
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm()],
+            null,
+            null,
+            null,
+            null,
+            $apiKeys
+        );
 
         $result = $handler->handle('contact');
 

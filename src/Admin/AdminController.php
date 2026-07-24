@@ -7,6 +7,7 @@ namespace formflow\Admin;
 use formflow\AdminAuth;
 use formflow\AdminIpWhitelistInterface;
 use formflow\AdminWhitelistRepositoryInterface;
+use formflow\FormApiKeyRepositoryInterface;
 use formflow\SubmissionRepositoryInterface;
 use InvalidArgumentException;
 
@@ -20,7 +21,9 @@ final class AdminController
         private readonly SubmissionRepositoryInterface $submissions,
         private readonly AdminWhitelistRepositoryInterface $whitelistRepository,
         private readonly array $configuredIps,
-        private readonly string $ipHashSecret
+        private readonly string $ipHashSecret,
+        private readonly FormApiKeyRepositoryInterface $apiKeys,
+        private readonly array $formIds
     ) {
     }
 
@@ -64,6 +67,10 @@ final class AdminController
 
         if ($path === 'admin/whitelist') {
             return $this->handleWhitelist();
+        }
+
+        if ($path === 'admin/api-keys') {
+            return $this->handleApiKeys();
         }
 
         return $this->htmlResponse(404, '<h1>Not found</h1>');
@@ -119,7 +126,7 @@ final class AdminController
             'perPage' => self::PER_PAGE,
             'formId' => $formId,
             'status' => $status,
-        ]));
+        ], 'Submissions'));
     }
 
     private function handleSubmissionDetail(int $id): array
@@ -130,7 +137,11 @@ final class AdminController
             return $this->htmlResponse(404, '<h1>Submission not found</h1>');
         }
 
-        return $this->htmlResponse(200, $this->render('submission', ['submission' => $submission]));
+        return $this->htmlResponse(200, $this->render(
+            'submission',
+            ['submission' => $submission],
+            'Submission #' . $id
+        ));
     }
 
     private function handleWhitelist(): array
@@ -164,12 +175,34 @@ final class AdminController
         return $this->htmlResponse(200, $this->renderWhitelist(null));
     }
 
+    private function handleApiKeys(): array
+    {
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            if (!$this->verifyCsrfToken()) {
+                return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
+            }
+
+            $formId = (string) ($_POST['form_id'] ?? '');
+
+            if (!in_array($formId, $this->formIds, true)) {
+                return $this->htmlResponse(422, '<h1>Unknown form id.</h1>');
+            }
+
+            $this->apiKeys->regenerate($formId);
+
+            return ['status' => 302, 'body' => '', 'redirect' => '/admin/api-keys'];
+        }
+
+        return $this->htmlResponse(200, $this->renderApiKeys());
+    }
+
     private function renderLogin(?string $error): string
     {
         return $this->render('login', [
             'error' => $error,
             'csrfToken' => $_SESSION['csrf_token'],
-        ]);
+            'isLocal' => $this->isLocalRequest(),
+        ], 'Log in', withNav: false);
     }
 
     private function renderWhitelist(?string $error): string
@@ -179,15 +212,35 @@ final class AdminController
             'entries' => $this->whitelistRepository->list(),
             'configuredIps' => $this->configuredIps,
             'csrfToken' => $_SESSION['csrf_token'],
-        ]);
+        ], 'IP whitelist');
     }
 
-    private function render(string $view, array $data): string
+    private function renderApiKeys(): string
+    {
+        $generated = $this->apiKeys->all();
+
+        $keys = [];
+
+        foreach ($this->formIds as $formId) {
+            $keys[$formId] = $generated[$formId] ?? null;
+        }
+
+        return $this->render('api-keys', [
+            'keys' => $keys,
+            'csrfToken' => $_SESSION['csrf_token'],
+        ], 'API keys');
+    }
+
+    private function render(string $view, array $data, string $title, bool $withNav = true): string
     {
         extract($data, EXTR_SKIP);
 
         ob_start();
         require __DIR__ . '/views/' . $view . '.php';
+        $content = (string) ob_get_clean();
+
+        ob_start();
+        require __DIR__ . '/views/_layout.php';
 
         return (string) ob_get_clean();
     }
@@ -197,6 +250,11 @@ final class AdminController
         $token = (string) ($_POST['csrf_token'] ?? '');
 
         return hash_equals((string) ($_SESSION['csrf_token'] ?? ''), $token);
+    }
+
+    private function isLocalRequest(): bool
+    {
+        return in_array($this->clientIp(), ['127.0.0.1', '::1'], true);
     }
 
     private function clientIp(): ?string

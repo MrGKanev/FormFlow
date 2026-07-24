@@ -1,29 +1,29 @@
 # formflow
 
-Минимален self-hosted PHP backend за приемане на HTML форми (като Web3Forms/Formspree), без тежък framework.
+Minimal self-hosted PHP backend for accepting HTML forms (like Web3Forms/Formspree), without a heavy framework.
 
-Пълната спецификация и обосновката на решенията са в [`formflow.md`](formflow.md).
-
-## Изисквания
+## Requirements
 
 - PHP 8.2+
 - Composer
 - PHP extensions: `curl`, `mbstring`, `pdo_sqlite`
 
-## Инсталация
+## Installation
 
 ```bash
 composer install
 cp .env.example .env
 ```
 
-Редактирай `.env` с реални SMTP/Turnstile данни, и `config/forms.php` с твоите форми.
+Edit `.env` with real SMTP/Turnstile data, and `config/forms.php` with your forms.
 
-## Локално стартиране
+## Running locally
 
 ```bash
 php -S localhost:8080 -t public
 ```
+
+`GET /` returns a short static home page with a description of the project and links to `/admin` and `/health`.
 
 Health check:
 
@@ -31,62 +31,224 @@ Health check:
 curl http://localhost:8080/health
 ```
 
-Тестово подаване (формата `contact` от `config/forms.php`):
+Test submission (the `contact` form from `config/forms.php`):
 
 ```bash
 curl -X POST http://localhost:8080/contact \
     -H "Origin: https://example.com" \
     -H "Accept: application/json" \
-    -F "_key=replace-with-a-long-random-value" \
     -F "name=Gabriel" \
     -F "email=gabriel@example.com" \
     -F "message=Test submission"
 ```
 
-По подразбиране `contact` има `'turnstile' => true`, а горната команда не подава `cf-turnstile-response` — очаквай `422 Turnstile validation failed`. За локален smoke test без реален Cloudflare token временно смени на `'turnstile' => false` в `config/forms.php`, или подай валиден token, получен от истински widget.
+If you have already generated an API key for `contact` from `/admin/api-keys`, also add `-F "_key=<the generated key>"` — otherwise submissions go through without it.
+
+By default `contact` has `'turnstile' => true`, and the command above does not send `cf-turnstile-response` — expect `422 Turnstile validation failed`. For a local smoke test without a real Cloudflare token, temporarily change it to `'turnstile' => false` in `config/forms.php`, or send a valid token obtained from a real widget.
 
 ## Admin panel
 
-Минимален admin панел за преглед на submissions, защитен с login + IP whitelist.
+Minimal admin panel for reviewing submissions, protected with login + IP whitelist.
 
 Routes:
 
-- `/admin` — dashboard с пагинирани submissions (филтри по форма и статус).
-- `/admin/login` — login форма.
-- `/admin/logout` — logout, redirect към `/admin/login`.
-- `/admin/submissions/{id}` — детайли за конкретен submission.
-- `/admin/whitelist` — управление на IP whitelist-а за admin панела (добавяне/премахване на IP/CIDR записи).
+- `/admin` — dashboard with paginated submissions (filters by form and status).
+- `/admin/login` — login form.
+- `/admin/logout` — logout, redirect to `/admin/login`.
+- `/admin/submissions/{id}` — details for a specific submission.
+- `/admin/whitelist` — management of the IP whitelist for the admin panel (adding/removing IP/CIDR entries).
+- `/admin/api-keys` — generate/regenerate an API key per form (replaces the static `api_key` field in `config/forms.php`).
 
-Изисква:
+Requires:
 
-- `ADMIN_USERNAME` и `ADMIN_PASSWORD_HASH` в `.env` (хешът се генерира с `php -r "echo password_hash('...', PASSWORD_DEFAULT), PHP_EOL;"`).
-- Поне един IP (или CIDR) в `config/admin.php` → `allowed_ips`, или запис в динамичния whitelist (таблицата `admin_ip_whitelist` в SQLite, управлявана през `/admin/whitelist`).
+- `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH` in `.env` (the hash is generated with `php -r "echo password_hash('...', PASSWORD_DEFAULT), PHP_EOL;"`).
+- At least one IP (or CIDR) in `config/admin.php` → `allowed_ips`, or an entry in the dynamic whitelist (the `admin_ip_whitelist` table in SQLite, managed via `/admin/whitelist`).
 
-За пълната дизайн обосновка виж [`docs/superpowers/specs/2026-07-24-admin-panel-design.md`](docs/superpowers/specs/2026-07-24-admin-panel-design.md).
+For the full design rationale see [`docs/superpowers/specs/2026-07-24-admin-panel-design.md`](docs/superpowers/specs/2026-07-24-admin-panel-design.md).
 
-## Тестове
+## Tests
 
 ```bash
 composer install
 vendor/bin/phpunit
 ```
 
-## Конфигурация
+## Configuration
 
-- `config/forms.php` — по форма: получател, `allowed_origins`, `allowed_fields`, `required_fields`, `subject`, `success_redirect`, `turnstile`, `api_key`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`.
-- `config/security.php` — глобален IP blocklist (точни IPv4 адреси или CIDR диапазони).
+- `config/forms.php` — per form: recipient, `allowed_origins`, `allowed_fields`, `required_fields`, `subject`, `success_redirect`, `turnstile`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`. The API key is no longer here — it is generated from `/admin/api-keys`.
+- `config/security.php` — global IP blocklist (exact IPv4 addresses or CIDR ranges).
 
-## Защити
+## Protections
 
-Allowed origins/referer, honeypot поле (`_website`), Cloudflare Turnstile, per-form `api_key` (изпраща се като скрито поле `_key`, обикновено един ключ на домейн), rate limiting по IP+форма с конфигурируем прозорец, дневен таван на submissions по форма, глобален IP blocklist, прост case-insensitive spam филтър по ключови думи/фрази.
+Allowed origins/referer, honeypot field (`_website`), Cloudflare Turnstile, per-form API key (generated from `/admin/api-keys`, sent as a hidden field `_key`; until one is generated for a given form, it accepts submissions without a key), rate limiting by IP+form with a configurable window, daily cap on submissions per form, global IP blocklist, simple case-insensitive spam filter by keywords/phrases.
 
-Пълните детайли, редът на проверките и HTTP кодовете за всеки случай са в [`formflow.md`](formflow.md#допълнение-към-плана--решения-за-v1-storage--защити).
-
-**Reverse proxy:** IP-базираните защити (rate limiting, IP blocklist, IP hash) четат `REMOTE_ADDR` директно. Зад Cloudflare/nginx това е proxy IP-то, не реалният клиент — настрой `real_ip`/`CF-Connecting-IP` на ниво Nginx, иначе тези защити не работят коректно.
+**Reverse proxy:** The IP-based protections (rate limiting, IP blocklist, IP hash) read `REMOTE_ADDR` directly. Behind Cloudflare/nginx this is the proxy's IP, not the real client — set up `real_ip`/`CF-Connecting-IP` at the Nginx level, otherwise these protections do not work correctly.
 
 ## Production deployment
 
-Nginx/Apache конфигурация, права за `storage/`, backup, GDPR препоръки — виж [`formflow.md`](formflow.md).
+### Nginx
+
+```nginx
+limit_req_zone $binary_remote_addr
+    zone=formflow_limit:10m
+    rate=5r/m;
+
+server {
+    listen 80;
+    server_name forms.example.com;
+
+    root /var/www/formflow/public;
+    index index.php;
+
+    client_max_body_size 64k;
+
+    location / {
+        limit_req
+            zone=formflow_limit
+            burst=3
+            nodelay;
+
+        try_files $uri /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include fastcgi_params;
+
+        fastcgi_param
+            SCRIPT_FILENAME
+            $document_root$fastcgi_script_name;
+
+        fastcgi_param HTTP_PROXY "";
+
+        fastcgi_pass
+            unix:/run/php/php8.3-fpm.sock;
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+}
+```
+
+Add HTTPS via Certbot, Cloudflare, or your existing reverse proxy.
+
+### Apache
+
+Document root must point to:
+
+```text
+/var/www/formflow/public
+```
+
+File: `public/.htaccess`
+
+```apache
+RewriteEngine On
+
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]
+```
+
+The project root itself must not be publicly accessible.
+
+### storage/ permissions and PHP extensions
+
+```bash
+mkdir -p storage
+touch storage/submissions.sqlite
+
+chown -R www-data:www-data storage
+chmod -R 775 storage
+```
+
+Replace `www-data` if PHP-FPM runs as a different user.
+
+Check that the required extensions are enabled:
+
+```bash
+php -m | grep -E "curl|mbstring|pdo|sqlite"
+```
+
+At minimum, these must be present:
+
+```text
+curl
+mbstring
+PDO
+pdo_sqlite
+sqlite3
+```
+
+Debian/Ubuntu example:
+
+```bash
+sudo apt install \
+    php-curl \
+    php-mbstring \
+    php-sqlite3
+```
+
+### Backup
+
+Minimal backup:
+
+```bash
+sqlite3 storage/submissions.sqlite \
+    ".backup '/backup/formflow-submissions.sqlite'"
+```
+
+Example cron entry:
+
+```cron
+0 3 * * * sqlite3 /var/www/formflow/storage/submissions.sqlite ".backup '/backup/formflow-$(date +\%F).sqlite'"
+```
+
+Periodically delete old backup files.
+
+### Data retention / GDPR
+
+Submissions can contain personal data. Recommended practices:
+
+- don't store raw IP addresses — use a monthly-rotating hash (formflow already does this via `IP_HASH_SECRET`);
+- define a retention period and delete submissions older than it;
+- don't collect fields you don't need;
+- restrict access to the SQLite file;
+- use HTTPS;
+- describe the processing in your privacy policy.
+
+Example: delete records older than 180 days:
+
+```bash
+sqlite3 storage/submissions.sqlite \
+    "DELETE FROM submissions
+     WHERE created_at < datetime('now', '-180 days');"
+```
+
+### Deployment checklist
+
+- [ ] PHP 8.2+ is installed.
+- [ ] `curl`, `mbstring`, `pdo_sqlite`, and `sqlite3` are enabled.
+- [ ] Composer dependencies are installed.
+- [ ] `.env` has real SMTP credentials.
+- [ ] `TURNSTILE_SECRET` is set.
+- [ ] `IP_HASH_SECRET` has been changed from its default.
+- [ ] `forms.php` has the correct domains and recipients.
+- [ ] Document root points to `public/`.
+- [ ] `storage/` is writable by PHP-FPM.
+- [ ] HTTPS is enabled.
+- [ ] Request body size is limited.
+- [ ] Rate limiting is enabled.
+- [ ] `/health` works.
+- [ ] A test email was received.
+- [ ] A failed submission stays recorded in SQLite.
+- [ ] SQLite backup is configured.
+- [ ] Privacy policy is up to date.
+- [ ] If the site is behind Cloudflare/nginx as a reverse proxy, `real_ip`/`CF-Connecting-IP` is configured at the Nginx level so `REMOTE_ADDR` reflects the real client IP rather than the proxy's — otherwise the IP blocklist, rate limiting, and IP hash don't work correctly (see the reverse proxy note under "Protections").
+- [ ] `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH` are set in `.env` (generate with `php -r "echo password_hash('...', PASSWORD_DEFAULT), PHP_EOL;"`).
+- [ ] `config/admin.php` → `allowed_ips` contains the operator's real IP.
+- [ ] If deployed behind Cloudflare/nginx, `real_ip`/`CF-Connecting-IP` is also configured for the admin IP whitelist (same requirement as for the IP blocklist above).
+- [ ] Generate an API key per form from `/admin/api-keys` for any form that should require one.
 
 ## Alternatives
 

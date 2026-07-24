@@ -9,6 +9,7 @@ use formflow\FormHandler;
 use formflow\IpBlocklist;
 use formflow\MailService;
 use formflow\SqliteAdminWhitelistRepository;
+use formflow\SqliteFormApiKeyRepository;
 use formflow\SqliteRateLimiter;
 use formflow\SqliteSubmissionRepository;
 use formflow\Turnstile;
@@ -24,6 +25,46 @@ if (is_file($root . '/.env')) {
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 $formId = trim((string) $path, '/');
+
+if ($formId === '') {
+    $isLocalhost = in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true);
+
+    header('Content-Type: text/html; charset=utf-8');
+    echo <<<'HTML'
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>formflow</title>
+    <link rel="stylesheet" href="/assets/style.css">
+    </head>
+    <body>
+    <div class="container">
+        <h1>formflow</h1>
+        <p class="tagline">A minimal, self-hosted form backend for static sites &mdash; no framework required.</p>
+        <ul class="features">
+            <li>Cloudflare Turnstile, honeypot &amp; keyword spam filtering</li>
+            <li>Per-IP and per-form rate limiting, plus a global IP blocklist</li>
+            <li>Admin panel with a per-site <code>_key</code> API key for each form</li>
+        </ul>
+        <div class="links">
+    HTML;
+
+    if ($isLocalhost) {
+        echo '<a href="/admin">Admin panel</a>';
+    }
+
+    echo <<<'HTML'
+            <a href="/health">Health check</a>
+        </div>
+    </div>
+    </body>
+    </html>
+    HTML;
+
+    exit;
+}
 
 if ($formId === 'health') {
     header('Content-Type: application/json; charset=utf-8');
@@ -44,6 +85,7 @@ if (!str_starts_with($databasePath, '/')) {
 }
 
 $ipHashSecret = getenv('IP_HASH_SECRET') ?: 'change-me';
+$forms = require $root . '/config/forms.php';
 
 if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
     $adminConfig = require $root . '/config/admin.php';
@@ -62,7 +104,9 @@ if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
         new SqliteSubmissionRepository($databasePath),
         $whitelistRepository,
         $allowedIps,
-        $ipHashSecret
+        $ipHashSecret,
+        new SqliteFormApiKeyRepository($databasePath),
+        array_keys($forms)
     );
 
     $result = $adminController->handle($formId);
@@ -93,8 +137,6 @@ if (is_string($clientIp) && $blocklist->isBlocked($clientIp)) {
     exit;
 }
 
-$forms = require $root . '/config/forms.php';
-
 try {
     $handler = new FormHandler(
         $forms,
@@ -106,7 +148,8 @@ try {
         new SqliteSubmissionRepository($databasePath),
         new Turnstile(getenv('TURNSTILE_SECRET') ?: ''),
         new SqliteRateLimiter($databasePath),
-        $ipHashSecret
+        $ipHashSecret,
+        new SqliteFormApiKeyRepository($databasePath)
     );
 
     $result = $handler->handle($formId);

@@ -16,7 +16,8 @@ final class FormHandler
         private readonly SubmissionRepositoryInterface $repository,
         private readonly TurnstileVerifierInterface $turnstile,
         private readonly RateLimiterInterface $rateLimiter,
-        private readonly string $ipHashSecret
+        private readonly string $ipHashSecret,
+        private readonly FormApiKeyRepositoryInterface $apiKeys
     ) {
     }
 
@@ -72,7 +73,7 @@ final class FormHandler
             ];
         }
 
-        $this->assertApiKey($config);
+        $this->assertApiKey($formId);
 
         if (!empty($_POST['_website'])) {
             try {
@@ -172,17 +173,17 @@ final class FormHandler
         throw new InvalidArgumentException('Origin is not allowed.');
     }
 
-    private function assertApiKey(array $config): void
+    private function assertApiKey(string $formId): void
     {
-        $expectedKey = $config['api_key'] ?? null;
+        $expectedKey = $this->apiKeys->get($formId);
 
-        if ($expectedKey === null || $expectedKey === '') {
+        if ($expectedKey === null) {
             return;
         }
 
         $providedKey = (string) ($_POST['_key'] ?? '');
 
-        if (!hash_equals((string) $expectedKey, $providedKey)) {
+        if (!hash_equals($expectedKey, $providedKey)) {
             throw new InvalidArgumentException('Invalid API key.');
         }
     }
