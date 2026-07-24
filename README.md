@@ -20,7 +20,7 @@ Alternatively, skip the wizard and configure by hand:
 cp .env.example .env
 ```
 
-Edit `.env` with real SMTP/Turnstile data, and `config/forms.php` with your forms.
+Edit `.env` with real SMTP/Turnstile data. You can keep starter forms in `config/forms.php` or create new forms from `/admin/forms`.
 
 ## Running locally
 
@@ -58,11 +58,12 @@ Minimal admin panel for reviewing submissions, protected with login + IP whiteli
 Routes:
 
 - `/admin` - dashboard with paginated submissions (filters by form and status).
+- `/admin/forms` - create new form endpoints and review configured forms.
 - `/admin/login` - login form.
 - `/admin/logout` - logout, redirect to `/admin/login`.
 - `/admin/submissions/{id}` - details for a specific submission.
 - `/admin/whitelist` - management of the IP whitelist for the admin panel (adding/removing IP/CIDR entries).
-- `/admin/api-keys` - generate/regenerate an API key per form (replaces the static `api_key` field in `config/forms.php`).
+- `/admin/api-keys` - generate/regenerate an API key per form.
 
 Requires:
 
@@ -78,7 +79,8 @@ vendor/bin/phpunit
 
 ## Configuration
 
-- `config/forms.php` - per form: recipient, `allowed_origins`, `allowed_fields`, `required_fields`, `subject`, `success_redirect`, `turnstile`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`. The API key is no longer here - it is generated from `/admin/api-keys`.
+- Forms can be created from `/admin/forms`. Starter/static forms can also live in `config/forms.php`.
+- Per form: recipient, `allowed_origins`, `allowed_fields`, `required_fields`, `subject`, `success_redirect`, `turnstile`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`. API keys are generated from `/admin/api-keys`.
 - `config/security.php` - global IP blocklist (exact IPv4 addresses or CIDR ranges).
 
 ## Protections

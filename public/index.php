@@ -11,6 +11,7 @@ use formflow\IpBlocklist;
 use formflow\MailService;
 use formflow\SqliteAdminWhitelistRepository;
 use formflow\SqliteFormApiKeyRepository;
+use formflow\SqliteFormRepository;
 use formflow\SqliteRateLimiter;
 use formflow\SqliteSubmissionRepository;
 use formflow\Turnstile;
@@ -124,7 +125,9 @@ if (!str_starts_with($databasePath, '/')) {
 }
 
 $ipHashSecret = getenv('IP_HASH_SECRET') ?: 'change-me';
-$forms = require $root . '/config/forms.php';
+$configuredForms = require $root . '/config/forms.php';
+$formRepository = new SqliteFormRepository($databasePath);
+$forms = array_merge($configuredForms, $formRepository->all());
 
 if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
     $adminConfig = require $root . '/config/admin.php';
@@ -145,7 +148,8 @@ if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
         $allowedIps,
         $ipHashSecret,
         new SqliteFormApiKeyRepository($databasePath),
-        array_keys($forms),
+        $forms,
+        $formRepository,
         (getenv('APP_ENV') ?: 'production') !== 'production'
     );
 

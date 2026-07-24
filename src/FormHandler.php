@@ -77,7 +77,7 @@ final class FormHandler
 
         if (!empty($_POST['_website'])) {
             try {
-                $honeypotFields = $this->extractAllowedFields($_POST, $config['allowed_fields'] ?? []);
+                $honeypotFields = $this->extractFields($_POST);
             } catch (InvalidArgumentException) {
                 $honeypotFields = [];
             }
@@ -91,9 +91,8 @@ final class FormHandler
             ];
         }
 
-        $fields = $this->extractAllowedFields($_POST, $config['allowed_fields'] ?? []);
+        $fields = $this->extractFields($_POST);
 
-        $this->validateRequiredFields($fields, $config['required_fields'] ?? []);
         $this->validateEmailField($fields);
 
         $spamFilter = new SpamFilter($config['blocked_patterns'] ?? []);
@@ -188,16 +187,16 @@ final class FormHandler
         }
     }
 
-    private function extractAllowedFields(array $input, array $allowedFields): array
+    private function extractFields(array $input): array
     {
         $result = [];
 
-        foreach ($allowedFields as $field) {
-            if (!array_key_exists($field, $input)) {
+        foreach ($input as $field => $value) {
+            $field = (string) $field;
+
+            if ($this->isSystemField($field)) {
                 continue;
             }
-
-            $value = $input[$field];
 
             if (is_array($value)) {
                 $value = implode(', ', array_map('strval', $value));
@@ -215,13 +214,9 @@ final class FormHandler
         return $result;
     }
 
-    private function validateRequiredFields(array $fields, array $requiredFields): void
+    private function isSystemField(string $field): bool
     {
-        foreach ($requiredFields as $field) {
-            if (!isset($fields[$field]) || $fields[$field] === '') {
-                throw new InvalidArgumentException(sprintf('Field "%s" is required.', $field));
-            }
-        }
+        return in_array($field, ['_key', '_website', 'cf-turnstile-response', 'csrf_token'], true);
     }
 
     private function validateEmailField(array $fields): void

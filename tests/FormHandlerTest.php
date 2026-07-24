@@ -43,8 +43,6 @@ final class FormHandlerTest extends TestCase
         return array_merge([
             'recipient' => 'hello@example.com',
             'allowed_origins' => ['https://example.com'],
-            'allowed_fields' => ['name', 'email', 'message'],
-            'required_fields' => ['name', 'email', 'message'],
             'subject' => 'New contact form submission',
             'success_redirect' => 'https://example.com/thank-you',
             'turnstile' => true,
@@ -132,18 +130,6 @@ final class FormHandlerTest extends TestCase
         $this->assertSame('blocked_honeypot', $row['status']);
     }
 
-    public function testMissingRequiredFieldThrowsInvalidArgumentException(): void
-    {
-        $_POST = ['name' => 'Ada', 'message' => 'Hello'];
-
-        $handler = $this->makeHandler(['contact' => $this->contactForm()]);
-
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('Field "email" is required.');
-
-        $handler->handle('contact');
-    }
-
     public function testInvalidEmailThrowsInvalidArgumentException(): void
     {
         $_POST = ['name' => 'Ada', 'email' => 'not-an-email', 'message' => 'Hello'];
@@ -206,6 +192,44 @@ final class FormHandlerTest extends TestCase
 
         $row = $repository->find(1);
         $this->assertSame('sent', $row['status']);
+    }
+
+    public function testSubmissionAcceptsAllUserFields(): void
+    {
+        $_POST = [
+            'name' => 'Ada',
+            'email' => 'ada@example.com',
+            'project_type' => 'Migration',
+            'preferred_date' => '2026-08-01',
+            '_key' => 'secret',
+            'cf-turnstile-response' => 'good-token',
+            '_website' => '',
+        ];
+
+        $mailSender = new FakeMailSender();
+        $repository = new SqliteSubmissionRepository(':memory:');
+
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm()],
+            $mailSender,
+            new FakeTurnstileVerifier(true),
+            $repository
+        );
+
+        $result = $handler->handle('contact');
+
+        $this->assertSame(200, $result['status']);
+        $this->assertSame([
+            'name' => 'Ada',
+            'email' => 'ada@example.com',
+            'project_type' => 'Migration',
+            'preferred_date' => '2026-08-01',
+        ], $mailSender->sentMessages[0]['fields']);
+
+        $row = $repository->find(1);
+        $payload = json_decode((string) $row['payload'], true, flags: JSON_THROW_ON_ERROR);
+
+        $this->assertSame($mailSender->sentMessages[0]['fields'], $payload);
     }
 
     public function testMailFailureMarksSubmissionFailedAndThrows(): void

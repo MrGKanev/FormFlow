@@ -10,6 +10,7 @@ $bodyClass = $withNav ? 'with-nav' : 'without-nav';
 
 $navItems = [
     '/admin' => 'Submissions',
+    '/admin/forms' => 'Forms',
     '/admin/api-keys' => 'API keys',
     '/admin/whitelist' => 'IP whitelist',
 ];

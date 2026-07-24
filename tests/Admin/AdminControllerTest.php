@@ -10,6 +10,7 @@ use formflow\AdminIpWhitelist;
 use formflow\FormApiKeyRepositoryInterface;
 use formflow\SqliteAdminWhitelistRepository;
 use formflow\SqliteFormApiKeyRepository;
+use formflow\SqliteFormRepository;
 use formflow\SqliteRateLimiter;
 use formflow\SqliteSubmissionRepository;
 use PHPUnit\Framework\TestCase;
@@ -39,17 +40,22 @@ final class AdminControllerTest extends TestCase
 
     /**
      * @param list<string> $allowedIps
-     * @param list<string> $formIds
+     * @param array<string, array<string, mixed>>|null $forms
      */
     private function makeController(
         array $allowedIps = ['203.0.113.10'],
         ?SqliteSubmissionRepository $submissions = null,
         ?SqliteAdminWhitelistRepository $whitelistRepository = null,
         ?FormApiKeyRepositoryInterface $apiKeys = null,
-        array $formIds = ['contact', 'support'],
+        ?array $forms = null,
+        ?SqliteFormRepository $formRepository = null,
         bool $devLoginEnabled = false
     ): AdminController {
         $whitelistRepository ??= new SqliteAdminWhitelistRepository(':memory:');
+        $forms ??= [
+            'contact' => ['recipient' => 'hello@example.com'],
+            'support' => ['recipient' => 'support@example.com'],
+        ];
 
         return new AdminController(
             new AdminAuth(
@@ -65,7 +71,8 @@ final class AdminControllerTest extends TestCase
             $allowedIps,
             'test-ip-hash-secret',
             $apiKeys ?? new SqliteFormApiKeyRepository(':memory:'),
-            $formIds,
+            $forms,
+            $formRepository ?? new SqliteFormRepository(':memory:'),
             $devLoginEnabled
         );
     }
@@ -463,5 +470,100 @@ final class AdminControllerTest extends TestCase
 
         $this->assertSame(419, $result['status']);
         $this->assertNull($apiKeys->get('contact'));
+    }
+
+    public function testFormsPageListsConfiguredForms(): void
+    {
+        $controller = $this->makeController();
+        $this->login($controller);
+
+        $result = $controller->handle('admin/forms');
+
+        $this->assertSame(200, $result['status']);
+        $this->assertStringContainsString('contact', $result['body']);
+        $this->assertStringContainsString('support@example.com', $result['body']);
+        $this->assertStringNotContainsString('name="allowed_fields[]"', $result['body']);
+        $this->assertStringNotContainsString('name="custom_allowed_fields"', $result['body']);
+        $this->assertStringNotContainsString('name="required_fields[]"', $result['body']);
+        $this->assertStringNotContainsString('name="custom_required_fields"', $result['body']);
+    }
+
+    public function testFormsPagePostCreatesFormAndRedirects(): void
+    {
+        $formRepository = new SqliteFormRepository(':memory:');
+        $controller = $this->makeController(formRepository: $formRepository);
+        $this->login($controller);
+
+        $controller->handle('admin/forms');
+        $token = $this->csrfToken();
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = [
+            'form_id' => 'newsletter',
+            'recipient' => 'news@example.com',
+            'allowed_origins' => "https://example.com\nhttps://www.example.com",
+            'subject' => 'New newsletter signup',
+            'success_redirect' => 'https://example.com/thanks',
+            'rate_limit_max' => '3',
+            'rate_limit_window' => '15',
+            'daily_limit' => '50',
+            'turnstile' => '1',
+            'blocked_patterns' => "viagra\n<a href=",
+            'csrf_token' => $token,
+        ];
+
+        $result = $controller->handle('admin/forms');
+
+        $this->assertSame(302, $result['status']);
+        $this->assertSame('/admin/forms', $result['redirect']);
+
+        $forms = $formRepository->all();
+        $this->assertArrayHasKey('newsletter', $forms);
+        $this->assertSame('news@example.com', $forms['newsletter']['recipient']);
+        $this->assertArrayNotHasKey('allowed_fields', $forms['newsletter']);
+        $this->assertArrayNotHasKey('required_fields', $forms['newsletter']);
+        $this->assertSame(['max' => 3, 'window_minutes' => 15], $forms['newsletter']['rate_limit_per_ip']);
+    }
+
+    public function testFormsPagePostRejectsDuplicateFormId(): void
+    {
+        $formRepository = new SqliteFormRepository(':memory:');
+        $controller = $this->makeController(formRepository: $formRepository);
+        $this->login($controller);
+
+        $controller->handle('admin/forms');
+        $token = $this->csrfToken();
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = [
+            'form_id' => 'contact',
+            'recipient' => 'hello@example.com',
+            'allowed_origins' => 'https://example.com',
+            'csrf_token' => $token,
+        ];
+
+        $result = $controller->handle('admin/forms');
+
+        $this->assertSame(422, $result['status']);
+        $this->assertSame([], $formRepository->all());
+    }
+
+    public function testFormsPagePostWithoutCsrfTokenReturns419(): void
+    {
+        $formRepository = new SqliteFormRepository(':memory:');
+        $controller = $this->makeController(formRepository: $formRepository);
+        $this->login($controller);
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = [
+            'form_id' => 'newsletter',
+            'recipient' => 'news@example.com',
+            'allowed_origins' => 'https://example.com',
+        ];
+
+        $result = $controller->handle('admin/forms');
+
+        $this->assertSame(419, $result['status']);
+        $this->assertSame([], $formRepository->all());
     }
 }

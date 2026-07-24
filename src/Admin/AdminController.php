@@ -8,6 +8,7 @@ use formflow\AdminAuth;
 use formflow\AdminIpWhitelistInterface;
 use formflow\AdminWhitelistRepositoryInterface;
 use formflow\FormApiKeyRepositoryInterface;
+use formflow\FormConfigRepositoryInterface;
 use formflow\SubmissionRepositoryInterface;
 use InvalidArgumentException;
 
@@ -23,7 +24,8 @@ final class AdminController
         private readonly array $configuredIps,
         private readonly string $ipHashSecret,
         private readonly FormApiKeyRepositoryInterface $apiKeys,
-        private readonly array $formIds,
+        private readonly array $forms,
+        private readonly FormConfigRepositoryInterface $formRepository,
         private readonly bool $devLoginEnabled = false
     ) {
     }
@@ -72,6 +74,10 @@ final class AdminController
 
         if ($path === 'admin/api-keys') {
             return $this->handleApiKeys();
+        }
+
+        if ($path === 'admin/forms') {
+            return $this->handleForms();
         }
 
         return $this->htmlResponse(404, '<h1>Not found</h1>');
@@ -192,7 +198,7 @@ final class AdminController
 
             $formId = (string) ($_POST['form_id'] ?? '');
 
-            if (!in_array($formId, $this->formIds, true)) {
+            if (!in_array($formId, array_keys($this->forms), true)) {
                 return $this->htmlResponse(422, '<h1>Unknown form id.</h1>');
             }
 
@@ -229,7 +235,7 @@ final class AdminController
 
         $keys = [];
 
-        foreach ($this->formIds as $formId) {
+        foreach (array_keys($this->forms) as $formId) {
             $keys[$formId] = $generated[$formId] ?? null;
         }
 
@@ -237,6 +243,31 @@ final class AdminController
             'keys' => $keys,
             'csrfToken' => $_SESSION['csrf_token'],
         ], 'API keys');
+    }
+
+    private function handleForms(): array
+    {
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            if (!$this->verifyCsrfToken()) {
+                return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
+            }
+
+            try {
+                [$formId, $config] = $this->formConfigFromPost($_POST);
+
+                if (isset($this->forms[$formId]) || $this->formRepository->exists($formId)) {
+                    throw new InvalidArgumentException('A form with this ID already exists.');
+                }
+
+                $this->formRepository->create($formId, $config);
+            } catch (InvalidArgumentException $exception) {
+                return $this->htmlResponse(422, $this->renderForms($exception->getMessage(), $_POST));
+            }
+
+            return ['status' => 302, 'body' => '', 'redirect' => '/admin/forms'];
+        }
+
+        return $this->htmlResponse(200, $this->renderForms(null, []));
     }
 
     private function render(string $view, array $data, string $title, bool $withNav = true): string
@@ -251,6 +282,114 @@ final class AdminController
         require __DIR__ . '/../views/_layout.php';
 
         return (string) ob_get_clean();
+    }
+
+    private function renderForms(?string $error, array $values): string
+    {
+        return $this->render('forms', [
+            'error' => $error,
+            'forms' => $this->forms,
+            'csrfToken' => $_SESSION['csrf_token'],
+            'values' => $values,
+        ], 'Forms');
+    }
+
+    /**
+     * @param array<string, mixed> $input
+     * @return array{0: string, 1: array<string, mixed>}
+     */
+    private function formConfigFromPost(array $input): array
+    {
+        $formId = trim((string) ($input['form_id'] ?? ''));
+
+        if (!preg_match('/^[a-z0-9][a-z0-9_-]{1,63}$/', $formId)) {
+            throw new InvalidArgumentException('Form ID must be 2-64 lowercase letters, numbers, dashes, or underscores.');
+        }
+
+        $recipient = trim((string) ($input['recipient'] ?? ''));
+
+        if (!filter_var($recipient, FILTER_VALIDATE_EMAIL)) {
+            throw new InvalidArgumentException('Recipient must be a valid email address.');
+        }
+
+        $allowedOrigins = $this->lines((string) ($input['allowed_origins'] ?? ''));
+
+        if ($allowedOrigins === []) {
+            throw new InvalidArgumentException('Add at least one allowed origin.');
+        }
+
+        foreach ($allowedOrigins as $origin) {
+            if (!$this->isHttpUrl($origin)) {
+                throw new InvalidArgumentException('Allowed origins must be valid http or https URLs.');
+            }
+        }
+
+        $subject = trim((string) ($input['subject'] ?? ''));
+        $successRedirect = trim((string) ($input['success_redirect'] ?? ''));
+
+        if ($successRedirect !== '' && !$this->isHttpUrl($successRedirect)) {
+            throw new InvalidArgumentException('Success redirect must be a valid http or https URL.');
+        }
+
+        $rateLimitMax = max(1, (int) ($input['rate_limit_max'] ?? 5));
+        $rateLimitWindow = max(1, (int) ($input['rate_limit_window'] ?? 10));
+        $dailyLimit = max(1, (int) ($input['daily_limit'] ?? 200));
+
+        $config = [
+            'recipient' => $recipient,
+            'allowed_origins' => $allowedOrigins,
+            'subject' => $subject !== '' ? $subject : 'New form submission',
+            'turnstile' => isset($input['turnstile']),
+            'rate_limit_per_ip' => [
+                'max' => $rateLimitMax,
+                'window_minutes' => $rateLimitWindow,
+            ],
+            'daily_limit' => $dailyLimit,
+        ];
+
+        if ($successRedirect !== '') {
+            $config['success_redirect'] = $successRedirect;
+        }
+
+        $blockedPatterns = $this->lines((string) ($input['blocked_patterns'] ?? ''));
+
+        if ($blockedPatterns !== []) {
+            $config['blocked_patterns'] = $blockedPatterns;
+        }
+
+        return [$formId, $config];
+    }
+
+    /** @return list<string> */
+    private function lines(string $value): array
+    {
+        $lines = preg_split('/\R/', $value) ?: [];
+        $result = [];
+
+        foreach ($lines as $line) {
+            $line = trim($line);
+
+            if ($line === '') {
+                continue;
+            }
+
+            if (!in_array($line, $result, true)) {
+                $result[] = $line;
+            }
+        }
+
+        return $result;
+    }
+
+    private function isHttpUrl(string $value): bool
+    {
+        if (!filter_var($value, FILTER_VALIDATE_URL)) {
+            return false;
+        }
+
+        $scheme = parse_url($value, PHP_URL_SCHEME);
+
+        return $scheme === 'http' || $scheme === 'https';
     }
 
     private function verifyCsrfToken(): bool

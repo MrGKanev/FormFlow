@@ -298,6 +298,8 @@ input[type="text"],
 input[type="password"],
 input[type="email"],
 input[type="url"],
+input[type="number"],
+textarea,
 select {
     display: block;
     width: 100%;
@@ -316,14 +318,101 @@ select {
     cursor: pointer;
 }
 
+textarea {
+    min-height: 96px;
+    resize: vertical;
+}
+
 input::placeholder {
     color: var(--subtle);
 }
 
 input:focus,
+textarea:focus,
 select:focus {
     border-color: var(--accent);
     box-shadow: var(--ring);
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    min-height: 42px;
+    padding-top: 1.56rem;
+}
+
+.checkbox-label input {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    accent-color: var(--accent);
+}
+
+.checkbox-label span {
+    margin: 0;
+}
+
+.field-picker {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    margin: 0 0 0.9rem;
+}
+
+.field-picker legend {
+    display: block;
+    width: 100%;
+    margin-bottom: 0.45rem;
+    color: var(--text);
+    font-size: 0.9rem;
+    font-weight: 650;
+}
+
+.option-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.option-check {
+    display: flex;
+    align-items: center;
+    gap: 0.58rem;
+    min-width: 0;
+    min-height: 42px;
+    padding: 0.52rem 0.62rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin: 0;
+    background: var(--surface-2);
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.option-check:has(input:checked) {
+    border-color: color-mix(in srgb, var(--accent), transparent 38%);
+    background: var(--accent-soft);
+}
+
+.option-check input {
+    flex: 0 0 auto;
+    width: 17px;
+    height: 17px;
+    margin: 0;
+    accent-color: var(--accent);
+}
+
+.option-check span {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.option-check code {
+    margin-left: 0.24rem;
+    font-size: 0.74em;
+    font-weight: 650;
 }
 
 .form-grid {
@@ -670,10 +759,36 @@ ul.features li strong {
 }
 
 .checks,
+.form-list,
 .chip-list {
     padding: 0;
     margin: 0;
     list-style: none;
+}
+
+.form-list {
+    display: grid;
+    gap: 10px;
+}
+
+.form-list li {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    gap: 6px 10px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+}
+
+.form-list li strong,
+.form-list li span {
+    overflow-wrap: anywhere;
+}
+
+.form-list li code {
+    grid-column: 1 / -1;
+    justify-self: start;
 }
 
 .checks {
@@ -774,6 +889,7 @@ ul.features li strong {
     .filter-form,
     .form-grid,
     .dashboard-summary,
+    .option-grid,
     .split-grid,
     ul.features {
         grid-template-columns: 1fr;
