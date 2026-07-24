@@ -14,7 +14,7 @@ $checked = array_key_exists('turnstile', $values) || $values === [];
     <div>
         <p class="page-kicker">Configuration</p>
         <h1>Forms</h1>
-        <p class="page-meta">Create endpoints and control which fields they accept.</p>
+        <p class="page-meta">Create endpoints that accept submitted form fields.</p>
     </div>
 </div>
 

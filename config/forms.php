@@ -11,19 +11,6 @@ return [
             'https://www.example.com',
         ],
 
-        'allowed_fields' => [
-            'name',
-            'email',
-            'phone',
-            'message',
-        ],
-
-        'required_fields' => [
-            'name',
-            'email',
-            'message',
-        ],
-
         'subject' => 'New contact form submission',
 
         'success_redirect' => 'https://example.com/thank-you',
@@ -48,17 +35,6 @@ return [
 
         'allowed_origins' => [
             'https://support.example.com',
-        ],
-
-        'allowed_fields' => [
-            'email',
-            'order_number',
-            'message',
-        ],
-
-        'required_fields' => [
-            'email',
-            'message',
         ],
 
         'subject' => 'New support request',

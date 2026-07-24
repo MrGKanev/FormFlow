@@ -23,8 +23,6 @@ final class SqliteFormRepositoryTest extends TestCase
         $repository->create('newsletter', [
             'recipient' => 'news@example.com',
             'allowed_origins' => ['https://example.com'],
-            'allowed_fields' => ['email'],
-            'required_fields' => ['email'],
             'subject' => 'New signup',
             'turnstile' => true,
         ]);
@@ -33,7 +31,6 @@ final class SqliteFormRepositoryTest extends TestCase
 
         $this->assertArrayHasKey('newsletter', $forms);
         $this->assertSame('news@example.com', $forms['newsletter']['recipient']);
-        $this->assertSame(['email'], $forms['newsletter']['allowed_fields']);
         $this->assertTrue($repository->exists('newsletter'));
         $this->assertFalse($repository->exists('contact'));
     }

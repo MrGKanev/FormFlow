@@ -80,7 +80,7 @@ vendor/bin/phpunit
 ## Configuration
 
 - Forms can be created from `/admin/forms`. Starter/static forms can also live in `config/forms.php`.
-- Per form: recipient, `allowed_origins`, `allowed_fields`, `required_fields`, `subject`, `success_redirect`, `turnstile`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`. API keys are generated from `/admin/api-keys`.
+- Per form: recipient, `allowed_origins`, `subject`, `success_redirect`, `turnstile`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`. Form endpoints accept all submitted user fields; system fields such as `_key`, `_website`, `cf-turnstile-response`, and `csrf_token` are not stored or emailed. API keys are generated from `/admin/api-keys`.
 - `config/security.php` - global IP blocklist (exact IPv4 addresses or CIDR ranges).
 
 ## Protections
