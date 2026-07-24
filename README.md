@@ -12,6 +12,23 @@ Minimal self-hosted PHP backend for accepting HTML forms (like Web3Forms/Formspr
 
 ```bash
 composer install
+```
+
+If no `.env` file exists yet, every request redirects to `/install` - a
+one-time setup wizard. Only the admin username and password (asked first)
+are required — SMTP details, App URL, and the Cloudflare Turnstile secret
+are all optional and can be left blank, filled in later by editing `.env`
+directly. Email sending won't work until `MAILER_DSN`/`MAIL_FROM` are set,
+but you can finish installing and log into the admin panel without them.
+The wizard writes `.env` and adds your IP to `config/admin.php`'s
+whitelist. `/install` refuses to run again once `.env` exists (`403`), and
+there's nothing to delete afterward - it's a route, not a file. If PHP
+can't write where it needs to, `/install` reports exactly which path(s)
+to fix instead of failing silently.
+
+Alternatively, skip the wizard and configure by hand:
+
+```bash
 cp .env.example .env
 ```
 
@@ -42,9 +59,9 @@ curl -X POST http://localhost:8080/contact \
     -F "message=Test submission"
 ```
 
-If you have already generated an API key for `contact` from `/admin/api-keys`, also add `-F "_key=<the generated key>"` — otherwise submissions go through without it.
+If you have already generated an API key for `contact` from `/admin/api-keys`, also add `-F "_key=<the generated key>"` - otherwise submissions go through without it.
 
-By default `contact` has `'turnstile' => true`, and the command above does not send `cf-turnstile-response` — expect `422 Turnstile validation failed`. For a local smoke test without a real Cloudflare token, temporarily change it to `'turnstile' => false` in `config/forms.php`, or send a valid token obtained from a real widget.
+By default `contact` has `'turnstile' => true`, and the command above does not send `cf-turnstile-response` - expect `422 Turnstile validation failed`. For a local smoke test without a real Cloudflare token, temporarily change it to `'turnstile' => false` in `config/forms.php`, or send a valid token obtained from a real widget.
 
 ## Admin panel
 
@@ -52,19 +69,17 @@ Minimal admin panel for reviewing submissions, protected with login + IP whiteli
 
 Routes:
 
-- `/admin` — dashboard with paginated submissions (filters by form and status).
-- `/admin/login` — login form.
-- `/admin/logout` — logout, redirect to `/admin/login`.
-- `/admin/submissions/{id}` — details for a specific submission.
-- `/admin/whitelist` — management of the IP whitelist for the admin panel (adding/removing IP/CIDR entries).
-- `/admin/api-keys` — generate/regenerate an API key per form (replaces the static `api_key` field in `config/forms.php`).
+- `/admin` - dashboard with paginated submissions (filters by form and status).
+- `/admin/login` - login form.
+- `/admin/logout` - logout, redirect to `/admin/login`.
+- `/admin/submissions/{id}` - details for a specific submission.
+- `/admin/whitelist` - management of the IP whitelist for the admin panel (adding/removing IP/CIDR entries).
+- `/admin/api-keys` - generate/regenerate an API key per form (replaces the static `api_key` field in `config/forms.php`).
 
 Requires:
 
 - `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH` in `.env` (the hash is generated with `php -r "echo password_hash('...', PASSWORD_DEFAULT), PHP_EOL;"`).
 - At least one IP (or CIDR) in `config/admin.php` → `allowed_ips`, or an entry in the dynamic whitelist (the `admin_ip_whitelist` table in SQLite, managed via `/admin/whitelist`).
-
-For the full design rationale see [`docs/superpowers/specs/2026-07-24-admin-panel-design.md`](docs/superpowers/specs/2026-07-24-admin-panel-design.md).
 
 ## Tests
 
@@ -75,82 +90,14 @@ vendor/bin/phpunit
 
 ## Configuration
 
-- `config/forms.php` — per form: recipient, `allowed_origins`, `allowed_fields`, `required_fields`, `subject`, `success_redirect`, `turnstile`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`. The API key is no longer here — it is generated from `/admin/api-keys`.
-- `config/security.php` — global IP blocklist (exact IPv4 addresses or CIDR ranges).
+- `config/forms.php` - per form: recipient, `allowed_origins`, `allowed_fields`, `required_fields`, `subject`, `success_redirect`, `turnstile`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`. The API key is no longer here - it is generated from `/admin/api-keys`.
+- `config/security.php` - global IP blocklist (exact IPv4 addresses or CIDR ranges).
 
 ## Protections
 
 Allowed origins/referer, honeypot field (`_website`), Cloudflare Turnstile, per-form API key (generated from `/admin/api-keys`, sent as a hidden field `_key`; until one is generated for a given form, it accepts submissions without a key), rate limiting by IP+form with a configurable window, daily cap on submissions per form, global IP blocklist, simple case-insensitive spam filter by keywords/phrases.
 
-**Reverse proxy:** The IP-based protections (rate limiting, IP blocklist, IP hash) read `REMOTE_ADDR` directly. Behind Cloudflare/nginx this is the proxy's IP, not the real client — set up `real_ip`/`CF-Connecting-IP` at the Nginx level, otherwise these protections do not work correctly.
-
-## Production deployment
-
-### Nginx
-
-```nginx
-limit_req_zone $binary_remote_addr
-    zone=formflow_limit:10m
-    rate=5r/m;
-
-server {
-    listen 80;
-    server_name forms.example.com;
-
-    root /var/www/formflow/public;
-    index index.php;
-
-    client_max_body_size 64k;
-
-    location / {
-        limit_req
-            zone=formflow_limit
-            burst=3
-            nodelay;
-
-        try_files $uri /index.php?$query_string;
-    }
-
-    location ~ \.php$ {
-        include fastcgi_params;
-
-        fastcgi_param
-            SCRIPT_FILENAME
-            $document_root$fastcgi_script_name;
-
-        fastcgi_param HTTP_PROXY "";
-
-        fastcgi_pass
-            unix:/run/php/php8.3-fpm.sock;
-    }
-
-    location ~ /\. {
-        deny all;
-    }
-}
-```
-
-Add HTTPS via Certbot, Cloudflare, or your existing reverse proxy.
-
-### Apache
-
-Document root must point to:
-
-```text
-/var/www/formflow/public
-```
-
-File: `public/.htaccess`
-
-```apache
-RewriteEngine On
-
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^ index.php [QSA,L]
-```
-
-The project root itself must not be publicly accessible.
+**Reverse proxy:** The IP-based protections (rate limiting, IP blocklist, IP hash) read `REMOTE_ADDR` directly. Behind Cloudflare/nginx this is the proxy's IP, not the real client - set up `real_ip`/`CF-Connecting-IP` at the Nginx level, otherwise these protections do not work correctly.
 
 ### storage/ permissions and PHP extensions
 
@@ -210,7 +157,7 @@ Periodically delete old backup files.
 
 Submissions can contain personal data. Recommended practices:
 
-- don't store raw IP addresses — use a monthly-rotating hash (formflow already does this via `IP_HASH_SECRET`);
+- don't store raw IP addresses - use a monthly-rotating hash (formflow already does this via `IP_HASH_SECRET`);
 - define a retention period and delete submissions older than it;
 - don't collect fields you don't need;
 - restrict access to the SQLite file;
@@ -244,9 +191,6 @@ sqlite3 storage/submissions.sqlite \
 - [ ] A failed submission stays recorded in SQLite.
 - [ ] SQLite backup is configured.
 - [ ] Privacy policy is up to date.
-- [ ] If the site is behind Cloudflare/nginx as a reverse proxy, `real_ip`/`CF-Connecting-IP` is configured at the Nginx level so `REMOTE_ADDR` reflects the real client IP rather than the proxy's — otherwise the IP blocklist, rate limiting, and IP hash don't work correctly (see the reverse proxy note under "Protections").
-- [ ] `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH` are set in `.env` (generate with `php -r "echo password_hash('...', PASSWORD_DEFAULT), PHP_EOL;"`).
-- [ ] `config/admin.php` → `allowed_ips` contains the operator's real IP.
 - [ ] If deployed behind Cloudflare/nginx, `real_ip`/`CF-Connecting-IP` is also configured for the admin IP whitelist (same requirement as for the IP blocklist above).
 - [ ] Generate an API key per form from `/admin/api-keys` for any form that should require one.
 
@@ -260,5 +204,5 @@ If you want a more feature-rich solution, consider:
 
 ### Hosted
 
-- [Web3Forms](https://web3forms.com/) — hosted, free tier, more features.
-- [Formspree](https://formspree.io/) — hosted, free tier, more features.
+- [Web3Forms](https://web3forms.com/) - hosted, free tier, more features.
+- [Formspree](https://formspree.io/) - hosted, free tier, more features.

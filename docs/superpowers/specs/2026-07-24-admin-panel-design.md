@@ -1,4 +1,4 @@
-# Admin panel with IP whitelisting — design
+# Admin panel with IP whitelisting - design
 
 Date: 2026-07-24
 Status: approved (pending final spec review)
@@ -10,7 +10,7 @@ one, scoped to what was agreed during brainstorming:
 
 - View submissions (list + detail), not edit/delete/retry them.
 - Access to the panel is gated by an IP whitelist *and* a username/password
-  login — two independent layers.
+  login - two independent layers.
 - The IP whitelist has a static, panel-immutable baseline (config file) plus
   a dynamic list manageable from inside the panel (SQLite), so an admin can
   never lock themselves out by mis-editing the dynamic list.
@@ -64,7 +64,7 @@ GET  /admin/logout             → destroy session, redirect to /admin/login
 
 Login brute-force protection reuses the existing `RateLimiterInterface` /
 `SqliteRateLimiter` (already used for form submissions), keyed by a fixed
-pseudo-form-id (`admin_login`) and the requester's IP hash — no new rate
+pseudo-form-id (`admin_login`) and the requester's IP hash - no new rate
 limiting mechanism. Default: 5 attempts / 15 minutes, configurable in
 `config/admin.php`.
 
@@ -74,10 +74,10 @@ limiting mechanism. Default: 5 attempts / 15 minutes, configurable in
 |---|---|
 | `IpMatcher` | Extracted from `IpBlocklist`'s existing exact-IP/CIDR matching logic (including the hardened malformed-CIDR rejection from commit `aaa621d`). No behavior change to `IpBlocklist`, just a shared dependency so the whitelist doesn't reimplement CIDR parsing. |
 | `IpBlocklist` | Refactored to use `IpMatcher` internally. Public API unchanged; existing `IpBlocklistTest` must keep passing unmodified. |
-| `AdminIpWhitelistInterface` / `AdminIpWhitelist` | `isAllowed(string $ip): bool` — true if `$ip` matches an entry in `config/admin.php['allowed_ips']` OR the SQLite `admin_ip_whitelist` table. Uses `IpMatcher`. |
+| `AdminIpWhitelistInterface` / `AdminIpWhitelist` | `isAllowed(string $ip): bool` - true if `$ip` matches an entry in `config/admin.php['allowed_ips']` OR the SQLite `admin_ip_whitelist` table. Uses `IpMatcher`. |
 | `AdminWhitelistRepositoryInterface` / `SqliteAdminWhitelistRepository` | CRUD on `admin_ip_whitelist` (`add(string $ipOrCidr, ?string $note)`, `remove(int $id)`, `list(): array`). Same SQLite file as submissions/rate-limit tables. |
-| `AdminAuth` | `attemptLogin(string $username, string $password): bool` — `hash_equals`-safe username compare + `password_verify()` against `ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH` (env). Wraps the rate limiter check. `isLoggedIn()`/`login()`/`logout()` manage `$_SESSION`. |
-| `AdminController` | Dispatches the routes above; depends only on the interfaces (`AdminAuth`, `AdminIpWhitelistInterface`, `SubmissionRepositoryInterface`, `AdminWhitelistRepositoryInterface`) — testable with fakes, same pattern as `FormHandler`. |
+| `AdminAuth` | `attemptLogin(string $username, string $password): bool` - `hash_equals`-safe username compare + `password_verify()` against `ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH` (env). Wraps the rate limiter check. `isLoggedIn()`/`login()`/`logout()` manage `$_SESSION`. |
+| `AdminController` | Dispatches the routes above; depends only on the interfaces (`AdminAuth`, `AdminIpWhitelistInterface`, `SubmissionRepositoryInterface`, `AdminWhitelistRepositoryInterface`) - testable with fakes, same pattern as `FormHandler`. |
 
 ## Data model changes
 
@@ -136,7 +136,7 @@ ADMIN_PASSWORD_HASH=
 
 `ADMIN_PASSWORD_HASH` is a `password_hash()` output (bcrypt/argon2), generated
 once via `php -r "echo password_hash('...', PASSWORD_DEFAULT), PHP_EOL;"` and
-pasted into `.env` — no in-panel password change flow (single-admin, matches
+pasted into `.env` - no in-panel password change flow (single-admin, matches
 `.env`-based secret management already used for `TURNSTILE_SECRET` etc.).
 If `ADMIN_PASSWORD_HASH` is empty, `AdminAuth` always rejects login (fails
 closed, not open).
@@ -144,7 +144,7 @@ closed, not open).
 ## Views
 
 Plain PHP templates under `src/Admin/views/` (`login.php`, `dashboard.php`,
-`submission.php`, `whitelist.php`), no template engine — consistent with the
+`submission.php`, `whitelist.php`), no template engine - consistent with the
 project's "no framework" stance. All dynamic output passed through
 `htmlspecialchars(..., ENT_QUOTES, 'UTF-8')`.
 
@@ -162,22 +162,22 @@ Same caveat as documented for `IpBlocklist`/rate limiting in `formflow.md`:
 if formflow sits behind Cloudflare/nginx, `REMOTE_ADDR` reflects the proxy,
 not the real client, unless `real_ip`/`CF-Connecting-IP` is configured at
 the web server. This applies to the admin IP whitelist exactly as it does to
-the existing blocklist — will be called out in the README/formflow.md
+the existing blocklist - will be called out in the README/formflow.md
 alongside the existing note rather than duplicated as new prose.
 
 ## Testing plan (PHPUnit, existing fakes/`:memory:` SQLite pattern)
 
-- `IpMatcherTest` — exact IP, CIDR match, malformed CIDR rejected (moved/adapted
+- `IpMatcherTest` - exact IP, CIDR match, malformed CIDR rejected (moved/adapted
   from the relevant cases already in `IpBlocklistTest`).
-- `IpBlocklistTest` — unchanged, must still pass (regression check on the refactor).
-- `AdminIpWhitelistTest` — config-only match, SQLite-only match, union of both,
+- `IpBlocklistTest` - unchanged, must still pass (regression check on the refactor).
+- `AdminIpWhitelistTest` - config-only match, SQLite-only match, union of both,
   no match.
-- `SqliteAdminWhitelistRepositoryTest` — add/remove/list, duplicate IP rejected.
-- `AdminAuthTest` — correct/incorrect credentials, empty password hash always
+- `SqliteAdminWhitelistRepositoryTest` - add/remove/list, duplicate IP rejected.
+- `AdminAuthTest` - correct/incorrect credentials, empty password hash always
   rejects, lockout after N attempts via a fake rate limiter.
-- `SqliteSubmissionRepositoryTest` — extended with `findPaginated`/`count`/`find`
+- `SqliteSubmissionRepositoryTest` - extended with `findPaginated`/`count`/`find`
   cases (filter by form_id, by status, pagination boundaries).
-- `AdminControllerTest` — 403 for non-whitelisted IP, login success/failure/
+- `AdminControllerTest` - 403 for non-whitelisted IP, login success/failure/
   lockout, dashboard listing with filters, submission detail 404 for unknown
   id, whitelist add/remove, CSRF rejection on POST without/with wrong token.
 

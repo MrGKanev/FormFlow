@@ -23,7 +23,8 @@ final class AdminController
         private readonly array $configuredIps,
         private readonly string $ipHashSecret,
         private readonly FormApiKeyRepositoryInterface $apiKeys,
-        private readonly array $formIds
+        private readonly array $formIds,
+        private readonly bool $devLoginEnabled = false
     ) {
     }
 
@@ -88,6 +89,13 @@ final class AdminController
 
         if (!$this->verifyCsrfToken()) {
             return $this->htmlResponse(419, $this->renderLogin('Invalid CSRF token.'));
+        }
+
+        if (($_POST['dev_bypass'] ?? null) && $this->canUseDevBypass()) {
+            session_regenerate_id(true);
+            $this->auth->login();
+
+            return ['status' => 302, 'body' => '', 'redirect' => '/admin'];
         }
 
         $username = (string) ($_POST['username'] ?? '');
@@ -201,7 +209,7 @@ final class AdminController
         return $this->render('login', [
             'error' => $error,
             'csrfToken' => $_SESSION['csrf_token'],
-            'isLocal' => $this->isLocalRequest(),
+            'isLocal' => $this->canUseDevBypass(),
         ], 'Log in', withNav: false);
     }
 
@@ -240,7 +248,7 @@ final class AdminController
         $content = (string) ob_get_clean();
 
         ob_start();
-        require __DIR__ . '/views/_layout.php';
+        require __DIR__ . '/../views/_layout.php';
 
         return (string) ob_get_clean();
     }
@@ -252,8 +260,16 @@ final class AdminController
         return hash_equals((string) ($_SESSION['csrf_token'] ?? ''), $token);
     }
 
-    private function isLocalRequest(): bool
+    private function canUseDevBypass(): bool
     {
+        // REMOTE_ADDR alone cannot prove the request is local: a reverse proxy
+        // talking to PHP-FPM over 127.0.0.1/a unix socket (the documented Nginx
+        // setup in this project) makes every request look loopback unless
+        // real_ip is configured. Require an explicit non-production opt-in too.
+        if (!$this->devLoginEnabled) {
+            return false;
+        }
+
         return in_array($this->clientIp(), ['127.0.0.1', '::1'], true);
     }
 

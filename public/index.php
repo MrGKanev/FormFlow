@@ -6,6 +6,7 @@ use formflow\Admin\AdminController;
 use formflow\AdminAuth;
 use formflow\AdminIpWhitelist;
 use formflow\FormHandler;
+use formflow\Install\InstallController;
 use formflow\IpBlocklist;
 use formflow\MailService;
 use formflow\SqliteAdminWhitelistRepository;
@@ -25,6 +26,41 @@ if (is_file($root . '/.env')) {
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 $formId = trim((string) $path, '/');
+
+$envExists = is_file($root . '/.env');
+
+if ($formId === 'install') {
+    if ($envExists) {
+        http_response_code(403);
+        header('Content-Type: text/html; charset=utf-8');
+        echo '<h1>Already installed.</h1>';
+        exit;
+    }
+
+    $installController = new InstallController(
+        $root . '/.env',
+        $root . '/config/admin.php',
+        $_SERVER['REMOTE_ADDR'] ?? null
+    );
+
+    $result = $installController->handle();
+
+    http_response_code($result['status']);
+
+    if (!empty($result['redirect'])) {
+        header('Location: ' . $result['redirect'], true, 302);
+        exit;
+    }
+
+    header('Content-Type: text/html; charset=utf-8');
+    echo $result['body'];
+    exit;
+}
+
+if (!$envExists && $formId !== 'health') {
+    header('Location: /install', true, 302);
+    exit;
+}
 
 if ($formId === '') {
     $isLocalhost = in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true);
@@ -106,7 +142,8 @@ if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
         $allowedIps,
         $ipHashSecret,
         new SqliteFormApiKeyRepository($databasePath),
-        array_keys($forms)
+        array_keys($forms),
+        (getenv('APP_ENV') ?: 'production') !== 'production'
     );
 
     $result = $adminController->handle($formId);

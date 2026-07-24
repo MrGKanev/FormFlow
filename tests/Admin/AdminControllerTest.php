@@ -46,7 +46,8 @@ final class AdminControllerTest extends TestCase
         ?SqliteSubmissionRepository $submissions = null,
         ?SqliteAdminWhitelistRepository $whitelistRepository = null,
         ?FormApiKeyRepositoryInterface $apiKeys = null,
-        array $formIds = ['contact', 'support']
+        array $formIds = ['contact', 'support'],
+        bool $devLoginEnabled = false
     ): AdminController {
         $whitelistRepository ??= new SqliteAdminWhitelistRepository(':memory:');
 
@@ -64,7 +65,8 @@ final class AdminControllerTest extends TestCase
             $allowedIps,
             'test-ip-hash-secret',
             $apiKeys ?? new SqliteFormApiKeyRepository(':memory:'),
-            $formIds
+            $formIds,
+            $devLoginEnabled
         );
     }
 
@@ -158,6 +160,84 @@ final class AdminControllerTest extends TestCase
 
         $this->assertSame(302, $result['status']);
         $this->assertSame('/admin', $result['redirect']);
+    }
+
+    public function testLoginPageShowsDevBypassButtonOnlyWhenLocalAndEnabled(): void
+    {
+        $controller = $this->makeController(['203.0.113.10']);
+        $result = $controller->handle('admin/login');
+        $this->assertStringNotContainsString('dev_bypass', $result['body']);
+
+        $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+        $localController = $this->makeController(['127.0.0.1'], devLoginEnabled: true);
+        $localResult = $localController->handle('admin/login');
+        $this->assertStringContainsString('dev_bypass', $localResult['body']);
+    }
+
+    public function testDevBypassButtonHiddenWhenLoopbackButNotEnabled(): void
+    {
+        // Simulates a reverse proxy talking to PHP-FPM over 127.0.0.1: the
+        // request looks loopback, but devLoginEnabled defaults to false in
+        // production, so the button must not appear.
+        $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+        $controller = $this->makeController(['127.0.0.1'], devLoginEnabled: false);
+
+        $result = $controller->handle('admin/login');
+
+        $this->assertStringNotContainsString('dev_bypass', $result['body']);
+    }
+
+    public function testDevBypassLoginSucceedsFromLoopbackWhenEnabled(): void
+    {
+        $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+        $controller = $this->makeController(['127.0.0.1'], devLoginEnabled: true);
+
+        $controller->handle('admin/login');
+        $token = $this->csrfToken();
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = ['dev_bypass' => '1', 'csrf_token' => $token];
+
+        $result = $controller->handle('admin/login');
+
+        $this->assertSame(302, $result['status']);
+        $this->assertSame('/admin', $result['redirect']);
+    }
+
+    public function testDevBypassLoginFailsWhenNotLoopbackEvenIfEnabled(): void
+    {
+        // Whitelisted but not a loopback address: the outer IP-whitelist gate
+        // passes, isolating the loopback-only check inside handleLogin().
+        $controller = $this->makeController(['203.0.113.10'], devLoginEnabled: true);
+
+        $controller->handle('admin/login');
+        $token = $this->csrfToken();
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = ['dev_bypass' => '1', 'csrf_token' => $token];
+
+        $result = $controller->handle('admin/login');
+
+        $this->assertSame(401, $result['status']);
+    }
+
+    public function testDevBypassLoginFailsFromLoopbackWhenNotEnabled(): void
+    {
+        // The critical regression case: REMOTE_ADDR looks loopback (e.g. Nginx
+        // proxying to PHP-FPM over 127.0.0.1 without real_ip configured), but
+        // devLoginEnabled is false (the production default) - must not bypass.
+        $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+        $controller = $this->makeController(['127.0.0.1'], devLoginEnabled: false);
+
+        $controller->handle('admin/login');
+        $token = $this->csrfToken();
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = ['dev_bypass' => '1', 'csrf_token' => $token];
+
+        $result = $controller->handle('admin/login');
+
+        $this->assertSame(401, $result['status']);
     }
 
     public function testLoginLockoutReturns429AfterTooManyAttempts(): void
