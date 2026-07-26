@@ -12,5 +12,10 @@ interface FormConfigRepositoryInterface
     /** @param array<string, mixed> $config */
     public function create(string $formId, array $config): void;
 
+    /** @param array<string, mixed> $config */
+    public function update(string $formId, array $config): void;
+
+    public function delete(string $formId): void;
+
     public function exists(string $formId): bool;
 }

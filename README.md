@@ -66,13 +66,19 @@ Minimal admin panel for reviewing submissions, protected with login + IP whiteli
 Routes:
 
 - `/admin` - dashboard with paginated submissions (filters by form and status).
-- `/admin/forms` - create new form endpoints and review configured forms.
+- `/admin/forms` - review configured forms and copy integration snippets.
+- `/admin/forms/new` - create a new database-backed form endpoint.
+- `/admin/forms/{id}/edit` - edit an existing form, storing changes as a database-backed configuration.
 - `/admin/login` - login form.
 - `/admin/logout` - logout, redirect to `/admin/login`.
-- `/admin/submissions/{id}` - details for a specific submission.
+- `/admin/submissions/{id}` - details for a specific submission, with review, resend, and delete actions.
 - `/admin/whitelist` - management of the IP whitelist for the admin panel (adding/removing IP/CIDR entries).
 - `/admin/api-keys` - generate/regenerate an API key per form.
-- `/admin/settings` - edit runtime, SMTP delivery, storage, login-rate-limit, admin-account, and global blocklist settings.
+- `/admin/delivery` - recent delivery states and failed-send errors.
+- `/admin/export` - CSV export of submissions, respecting dashboard filters.
+- `/admin/settings` - edit runtime, SMTP delivery, retention, storage, login-rate-limit, admin-account, and global blocklist settings; send a test email; run retention cleanup.
+- `/admin/users` - create/delete additional admin users. Additional users are only managed from the admin panel.
+- `/admin/audit` - recent admin actions.
 
 Requires:
 
@@ -89,14 +95,14 @@ vendor/bin/phpunit
 ## Configuration
 
 - Forms can be created from `/admin/forms`. Starter/static forms can also live in `config/forms.php`.
-- Per form: recipient, `allowed_origins`, `subject`, `success_redirect`, `turnstile`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`. Form endpoints accept all submitted user fields; system fields such as `_key`, `_website`, `cf-turnstile-response`, and `csrf_token` are not stored or emailed. API keys are generated from `/admin/api-keys`.
+- Per form: recipient, `allowed_origins`, `subject`, `success_redirect`, `turnstile`, `require_api_key`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`. Form endpoints accept all submitted user fields; system fields such as `_key`, `_website`, `cf-turnstile-response`, and `csrf_token` are not stored or emailed. API keys are generated from `/admin/api-keys`.
 - Global app settings can be edited from `/admin/settings`. It writes selected values to `.env`, login-rate-limit values to `config/admin.php`, and the global IP blocklist to `config/security.php`.
 - Mail can be configured with standard SMTP fields: `SMTP_HOST`, `SMTP_PORT`, `SMTP_ENCRYPTION` (`tls`, `ssl`, or `none`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM`, and `MAIL_FROM_NAME`. `MAILER_DSN` is still supported as an advanced override; when set, it takes precedence over the individual SMTP fields.
 - `config/security.php` - global IP blocklist (exact IP addresses or IPv4 CIDR ranges).
 
 ## Protections
 
-Allowed origins/referer, honeypot field (`_website`), Cloudflare Turnstile, per-form API key (generated from `/admin/api-keys`, sent as a hidden field `_key`; until one is generated for a given form, it accepts submissions without a key), rate limiting by IP+form with a configurable window, daily cap on submissions per form, global IP blocklist, simple case-insensitive spam filter by keywords/phrases.
+Allowed origins/referer, honeypot field (`_website`), Cloudflare Turnstile, per-form API key (generated from `/admin/api-keys`, sent as a hidden field `_key`; forms may be configured to require a key), rate limiting by IP+form with a configurable window, daily cap on submissions per form, global IP blocklist, simple case-insensitive spam filter by keywords/phrases.
 
 **Reverse proxy:** The IP-based protections (rate limiting, IP blocklist, IP hash) read `REMOTE_ADDR` directly. Behind Cloudflare/nginx this is the proxy's IP, not the real client - set up `real_ip`/`CF-Connecting-IP` at the Nginx level, otherwise these protections do not work correctly.
 

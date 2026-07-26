@@ -344,7 +344,8 @@ form.inline {
     box-shadow: none;
 }
 
-form.settings-form {
+form.settings-form,
+form.utility-form {
     margin: 0;
     padding: 0;
     border: 0;
@@ -880,6 +881,11 @@ ul.features li strong {
     gap: 10px;
 }
 
+.form-list.prominent {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
 .form-list li {
     display: grid;
     grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
@@ -898,6 +904,11 @@ ul.features li strong {
 .form-list li code {
     grid-column: 1 / -1;
     justify-self: start;
+}
+
+.form-list li textarea,
+.form-list li .form-actions {
+    grid-column: 1 / -1;
 }
 
 .checks {
@@ -1011,6 +1022,7 @@ ul.features li strong {
     .dashboard-summary,
     .option-grid,
     .split-grid,
+    .form-list.prominent,
     .settings-grid,
     .health-grid,
     ul.features {

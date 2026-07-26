@@ -275,6 +275,25 @@ final class FormHandlerTest extends TestCase
         $this->assertSame(200, $result['status']);
     }
 
+    public function testRequiredApiKeyFailsWhenNoKeyHasBeenGenerated(): void
+    {
+        $_POST = [
+            'name' => 'Ada',
+            'email' => 'ada@example.com',
+            'message' => 'Hello',
+            'cf-turnstile-response' => 'good-token',
+        ];
+
+        $handler = $this->makeHandler([
+            'contact' => $this->contactForm(['require_api_key' => true]),
+        ]);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('API key is required.');
+
+        $handler->handle('contact');
+    }
+
     public function testApiKeyMismatchThrowsInvalidArgumentException(): void
     {
         $_POST = [

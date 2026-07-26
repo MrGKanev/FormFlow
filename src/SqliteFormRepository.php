@@ -74,6 +74,35 @@ final class SqliteFormRepository implements FormConfigRepositoryInterface
         ]);
     }
 
+    public function update(string $formId, array $config): void
+    {
+        $statement = $this->pdo->prepare(
+            'INSERT INTO forms (form_id, config_json, created_at, updated_at)
+             VALUES (:form_id, :config_json, :created_at, :updated_at)
+             ON CONFLICT(form_id) DO UPDATE SET
+                config_json = excluded.config_json,
+                updated_at = excluded.updated_at'
+        );
+
+        $now = gmdate('c');
+
+        $statement->execute([
+            'form_id' => $formId,
+            'config_json' => json_encode(
+                $config,
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
+            ),
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+    }
+
+    public function delete(string $formId): void
+    {
+        $statement = $this->pdo->prepare('DELETE FROM forms WHERE form_id = :form_id');
+        $statement->execute(['form_id' => $formId]);
+    }
+
     public function exists(string $formId): bool
     {
         $statement = $this->pdo->prepare('SELECT 1 FROM forms WHERE form_id = :form_id LIMIT 1');

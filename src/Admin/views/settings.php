@@ -1,6 +1,7 @@
 <?php
 /** @var string|null $error */
 /** @var bool $saved */
+/** @var string|null $notice */
 /** @var array<string, mixed> $settings */
 /** @var string $csrfToken */
 $value = static fn (string $key, string $default = ''): string => htmlspecialchars(
@@ -20,6 +21,10 @@ $selected = static fn (string $key, string $value): string => (string) ($setting
 
 <?php if ($saved): ?>
     <p class="banner success">Settings saved.</p>
+<?php endif; ?>
+
+<?php if (($notice ?? null) !== null): ?>
+    <p class="banner success"><?= htmlspecialchars((string) $notice, ENT_QUOTES, 'UTF-8') ?></p>
 <?php endif; ?>
 
 <?php if ($error !== null): ?>
@@ -56,6 +61,10 @@ $selected = static fn (string $key, string $value): string => (string) ($setting
                 <label class="span-2">
                     <span>IP hash secret</span>
                     <input type="text" name="ip_hash_secret" value="<?= $value('ip_hash_secret') ?>" required>
+                </label>
+                <label>
+                    <span>Retention days</span>
+                    <input type="number" name="retention_days" min="1" value="<?= $value('retention_days', '180') ?>">
                 </label>
             </div>
         </section>
@@ -148,6 +157,39 @@ $selected = static fn (string $key, string $value): string => (string) ($setting
     </div>
 
     <div class="form-actions settings-actions">
+        <input type="hidden" name="action" value="save">
         <button type="submit">Save settings</button>
     </div>
 </form>
+
+<div class="settings-grid">
+    <section class="panel">
+        <div class="section-heading">
+            <h2>Test email</h2>
+        </div>
+        <form method="POST" action="/admin/settings" class="utility-form">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+            <input type="hidden" name="action" value="test_email">
+            <label>
+                <span>Recipient</span>
+                <input type="email" name="test_email_to" value="<?= $value('mail_from') ?>" required>
+            </label>
+            <div class="form-actions"><button type="submit" class="secondary">Send test email</button></div>
+        </form>
+    </section>
+
+    <section class="panel">
+        <div class="section-heading">
+            <h2>Retention cleanup</h2>
+        </div>
+        <form method="POST" action="/admin/settings" class="utility-form">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+            <input type="hidden" name="action" value="cleanup">
+            <label>
+                <span>Delete submissions older than days</span>
+                <input type="number" name="retention_days" min="1" value="<?= $value('retention_days', '180') ?>">
+            </label>
+            <div class="form-actions"><button type="submit" class="secondary">Run cleanup</button></div>
+        </form>
+    </section>
+</div>

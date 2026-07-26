@@ -6,11 +6,15 @@ namespace formflow\Admin;
 
 use formflow\AdminAuth;
 use formflow\AdminIpWhitelistInterface;
+use formflow\AdminUserRepositoryInterface;
 use formflow\AdminWhitelistRepositoryInterface;
+use formflow\AuditLogRepositoryInterface;
 use formflow\FormApiKeyRepositoryInterface;
 use formflow\FormConfigRepositoryInterface;
+use formflow\MailSenderInterface;
 use formflow\SubmissionRepositoryInterface;
 use InvalidArgumentException;
+use Throwable;
 
 final class AdminController
 {
@@ -29,7 +33,10 @@ final class AdminController
         private readonly bool $devLoginEnabled = false,
         private readonly ?string $envPath = null,
         private readonly ?string $adminConfigPath = null,
-        private readonly ?string $securityConfigPath = null
+        private readonly ?string $securityConfigPath = null,
+        private readonly ?AdminUserRepositoryInterface $adminUsers = null,
+        private readonly ?AuditLogRepositoryInterface $auditLog = null,
+        private readonly ?MailSenderInterface $mailSender = null
     ) {
     }
 
@@ -67,8 +74,20 @@ final class AdminController
             return $this->handleDashboard();
         }
 
+        if ($path === 'admin/export') {
+            return $this->handleExport();
+        }
+
         if (preg_match('#^admin/submissions/(\d+)$#', $path, $matches) === 1) {
             return $this->handleSubmissionDetail((int) $matches[1]);
+        }
+
+        if (preg_match('#^admin/submissions/(\d+)/action$#', $path, $matches) === 1) {
+            return $this->handleSubmissionAction((int) $matches[1]);
+        }
+
+        if ($path === 'admin/delivery') {
+            return $this->handleDelivery();
         }
 
         if ($path === 'admin/whitelist') {
@@ -83,8 +102,28 @@ final class AdminController
             return $this->handleForms();
         }
 
+        if ($path === 'admin/forms/new') {
+            return $this->handleFormCreate();
+        }
+
+        if (preg_match('#^admin/forms/([^/]+)/edit$#', $path, $matches) === 1) {
+            return $this->handleFormEdit((string) $matches[1]);
+        }
+
+        if (preg_match('#^admin/forms/([^/]+)/delete$#', $path, $matches) === 1) {
+            return $this->handleFormDelete((string) $matches[1]);
+        }
+
         if ($path === 'admin/settings') {
             return $this->handleSettings();
+        }
+
+        if ($path === 'admin/users') {
+            return $this->handleUsers();
+        }
+
+        if ($path === 'admin/audit') {
+            return $this->handleAudit();
         }
 
         return $this->htmlResponse(404, '<h1>Not found</h1>');
@@ -106,7 +145,7 @@ final class AdminController
 
         if (($_POST['dev_bypass'] ?? null) && $this->canUseDevBypass()) {
             session_regenerate_id(true);
-            $this->auth->login();
+            $this->auth->login('dev-localhost');
 
             return ['status' => 302, 'body' => '', 'redirect' => '/admin'];
         }
@@ -126,7 +165,8 @@ final class AdminController
         }
 
         session_regenerate_id(true);
-        $this->auth->login();
+        $this->auth->login($username);
+        $this->recordAudit('login', 'Signed in.');
 
         return ['status' => 302, 'body' => '', 'redirect' => '/admin'];
     }
@@ -147,6 +187,7 @@ final class AdminController
             'perPage' => self::PER_PAGE,
             'formId' => $formId,
             'status' => $status,
+            'setupStatus' => $this->setupStatus(),
         ], 'Submissions'));
     }
 
@@ -163,6 +204,142 @@ final class AdminController
             ['submission' => $submission],
             'Submission #' . $id
         ));
+    }
+
+    private function handleSubmissionAction(int $id): array
+    {
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            return $this->htmlResponse(405, '<h1>Method not allowed</h1>');
+        }
+
+        if (!$this->verifyCsrfToken()) {
+            return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
+        }
+
+        $submission = $this->submissions->find($id);
+
+        if ($submission === null) {
+            return $this->htmlResponse(404, '<h1>Submission not found</h1>');
+        }
+
+        $action = (string) ($_POST['action'] ?? '');
+
+        if ($action === 'review') {
+            $this->submissions->markReviewed($id);
+            $this->recordAudit('submission.review', 'Marked submission #' . $id . ' reviewed.');
+
+            return ['status' => 302, 'body' => '', 'redirect' => '/admin/submissions/' . $id];
+        }
+
+        if ($action === 'delete') {
+            $this->submissions->delete($id);
+            $this->recordAudit('submission.delete', 'Deleted submission #' . $id . '.');
+
+            return ['status' => 302, 'body' => '', 'redirect' => '/admin'];
+        }
+
+        if ($action === 'resend') {
+            $error = $this->resendSubmission($submission);
+
+            if ($error !== null) {
+                return $this->htmlResponse(422, $this->render(
+                    'submission',
+                    ['submission' => $this->submissions->find($id) ?? $submission, 'error' => $error],
+                    'Submission #' . $id
+                ));
+            }
+
+            return ['status' => 302, 'body' => '', 'redirect' => '/admin/submissions/' . $id];
+        }
+
+        return $this->htmlResponse(422, '<h1>Unknown submission action.</h1>');
+    }
+
+    private function resendSubmission(array $submission): ?string
+    {
+        if ($this->mailSender === null) {
+            return 'Mail service is not available.';
+        }
+
+        $formId = (string) $submission['form_id'];
+        $config = $this->forms[$formId] ?? null;
+
+        if (!is_array($config)) {
+            return 'Form configuration was not found.';
+        }
+
+        $payload = json_decode((string) $submission['payload'], true);
+
+        if (!is_array($payload)) {
+            return 'Submission payload is invalid.';
+        }
+
+        try {
+            $this->mailSender->send(
+                (string) ($config['recipient'] ?? ''),
+                (string) ($config['subject'] ?? 'New form submission'),
+                $payload
+            );
+
+            $this->submissions->markSent((int) $submission['id']);
+            $this->recordAudit('submission.resend', 'Resent submission #' . (int) $submission['id'] . '.');
+
+            return null;
+        } catch (Throwable $exception) {
+            $this->submissions->markFailed((int) $submission['id'], $exception->getMessage());
+            $this->recordAudit('submission.resend_failed', 'Resend failed for submission #' . (int) $submission['id'] . '.');
+
+            return 'Unable to resend email: ' . $exception->getMessage();
+        }
+    }
+
+    private function handleExport(): array
+    {
+        $formId = isset($_GET['form_id']) && $_GET['form_id'] !== '' ? (string) $_GET['form_id'] : null;
+        $status = isset($_GET['status']) && $_GET['status'] !== '' ? (string) $_GET['status'] : null;
+        $rows = $this->submissions->findForExport($formId, $status);
+        $csv = fopen('php://temp', 'r+');
+
+        if ($csv === false) {
+            return $this->htmlResponse(500, '<h1>Unable to export CSV.</h1>');
+        }
+
+        fputcsv($csv, ['id', 'form_id', 'status', 'created_at', 'sent_at', 'reviewed_at', 'error_message', 'payload_json'], ',', '"', '');
+
+        foreach ($rows as $row) {
+            fputcsv($csv, [
+                $row['id'] ?? '',
+                $row['form_id'] ?? '',
+                $row['status'] ?? '',
+                $row['created_at'] ?? '',
+                $row['sent_at'] ?? '',
+                $row['reviewed_at'] ?? '',
+                $row['error_message'] ?? '',
+                $row['payload'] ?? '',
+            ], ',', '"', '');
+        }
+
+        rewind($csv);
+        $body = stream_get_contents($csv);
+        fclose($csv);
+        $this->recordAudit('submissions.export', 'Exported ' . count($rows) . ' submissions.');
+
+        return [
+            'status' => 200,
+            'body' => (string) $body,
+            'redirect' => null,
+            'headers' => [
+                'Content-Type' => 'text/csv; charset=utf-8',
+                'Content-Disposition' => 'attachment; filename="formflow-submissions.csv"',
+            ],
+        ];
+    }
+
+    private function handleDelivery(): array
+    {
+        return $this->htmlResponse(200, $this->render('delivery', [
+            'entries' => $this->submissions->deliveryLog(),
+        ], 'Delivery log'));
     }
 
     private function handleWhitelist(): array
@@ -254,6 +431,11 @@ final class AdminController
 
     private function handleForms(): array
     {
+        return $this->htmlResponse(200, $this->renderForms(null, []));
+    }
+
+    private function handleFormCreate(): array
+    {
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$this->verifyCsrfToken()) {
                 return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
@@ -267,14 +449,64 @@ final class AdminController
                 }
 
                 $this->formRepository->create($formId, $config);
+                $this->recordAudit('form.create', 'Created form "' . $formId . '".');
             } catch (InvalidArgumentException $exception) {
-                return $this->htmlResponse(422, $this->renderForms($exception->getMessage(), $_POST));
+                return $this->htmlResponse(422, $this->renderFormCreator($exception->getMessage(), $_POST));
             }
 
             return ['status' => 302, 'body' => '', 'redirect' => '/admin/forms'];
         }
 
-        return $this->htmlResponse(200, $this->renderForms(null, []));
+        return $this->htmlResponse(200, $this->renderFormCreator(null, []));
+    }
+
+    private function handleFormEdit(string $formId): array
+    {
+        $formId = rawurldecode($formId);
+
+        if (!isset($this->forms[$formId])) {
+            return $this->htmlResponse(404, '<h1>Form not found</h1>');
+        }
+
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            if (!$this->verifyCsrfToken()) {
+                return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
+            }
+
+            try {
+                [, $config] = $this->formConfigFromPost($_POST, $formId);
+                $this->formRepository->update($formId, $config);
+                $this->recordAudit('form.update', 'Updated form "' . $formId . '".');
+            } catch (InvalidArgumentException $exception) {
+                return $this->htmlResponse(422, $this->renderFormEditor($formId, $exception->getMessage(), $_POST));
+            }
+
+            return ['status' => 302, 'body' => '', 'redirect' => '/admin/forms'];
+        }
+
+        return $this->htmlResponse(200, $this->renderFormEditor(
+            $formId,
+            null,
+            $this->formValuesFromConfig($formId, $this->forms[$formId])
+        ));
+    }
+
+    private function handleFormDelete(string $formId): array
+    {
+        $formId = rawurldecode($formId);
+
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            return $this->htmlResponse(405, '<h1>Method not allowed</h1>');
+        }
+
+        if (!$this->verifyCsrfToken()) {
+            return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
+        }
+
+        $this->formRepository->delete($formId);
+        $this->recordAudit('form.delete', 'Deleted dynamic form "' . $formId . '".');
+
+        return ['status' => 302, 'body' => '', 'redirect' => '/admin/forms'];
     }
 
     private function render(string $view, array $data, string $title, bool $withNav = true): string
@@ -296,9 +528,30 @@ final class AdminController
         return $this->render('forms', [
             'error' => $error,
             'forms' => $this->forms,
+            'dynamicFormIds' => array_keys($this->formRepository->all()),
+            'apiKeys' => $this->apiKeys->all(),
             'csrfToken' => $_SESSION['csrf_token'],
             'values' => $values,
         ], 'Forms');
+    }
+
+    private function renderFormEditor(string $formId, ?string $error, array $values): string
+    {
+        return $this->render('form-edit', [
+            'error' => $error,
+            'formId' => $formId,
+            'csrfToken' => $_SESSION['csrf_token'],
+            'values' => $values,
+        ], 'Edit form');
+    }
+
+    private function renderFormCreator(?string $error, array $values): string
+    {
+        return $this->render('form-new', [
+            'error' => $error,
+            'csrfToken' => $_SESSION['csrf_token'],
+            'values' => $values,
+        ], 'New form');
     }
 
     private function handleSettings(): array
@@ -306,6 +559,26 @@ final class AdminController
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$this->verifyCsrfToken()) {
                 return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
+            }
+
+            $action = (string) ($_POST['action'] ?? 'save');
+
+            if ($action === 'cleanup') {
+                $days = max(1, (int) ($_POST['retention_days'] ?? $this->currentSettings()['retention_days'] ?? 180));
+                $deleted = $this->submissions->deleteOlderThan($days);
+                $this->recordAudit('retention.cleanup', 'Deleted ' . $deleted . ' submissions older than ' . $days . ' days.');
+
+                return $this->htmlResponse(200, $this->renderSettings(null, [], false, 'Deleted ' . $deleted . ' old submissions.'));
+            }
+
+            if ($action === 'test_email') {
+                $message = $this->sendTestEmail((string) ($_POST['test_email_to'] ?? ''));
+
+                if (str_starts_with($message, 'Unable')) {
+                    return $this->htmlResponse(422, $this->renderSettings($message, $_POST, false));
+                }
+
+                return $this->htmlResponse(200, $this->renderSettings(null, $_POST, false, $message));
             }
 
             try {
@@ -321,12 +594,13 @@ final class AdminController
         return $this->htmlResponse(200, $this->renderSettings(null, [], ($_GET['saved'] ?? null) === '1'));
     }
 
-    private function renderSettings(?string $error, array $values, bool $saved): string
+    private function renderSettings(?string $error, array $values, bool $saved, ?string $notice = null): string
     {
         return $this->render('settings', [
             'error' => $error,
             'saved' => $saved,
-            'settings' => $values !== [] ? $values : $this->currentSettings(),
+            'notice' => $notice,
+            'settings' => $values !== [] ? array_merge($this->currentSettings(), $values) : $this->currentSettings(),
             'csrfToken' => $_SESSION['csrf_token'],
         ], 'Settings');
     }
@@ -351,6 +625,7 @@ final class AdminController
             'turnstile_secret' => $env['TURNSTILE_SECRET'] ?? (getenv('TURNSTILE_SECRET') ?: ''),
             'database_path' => $env['DATABASE_PATH'] ?? (getenv('DATABASE_PATH') ?: 'storage/submissions.sqlite'),
             'ip_hash_secret' => $env['IP_HASH_SECRET'] ?? (getenv('IP_HASH_SECRET') ?: ''),
+            'retention_days' => $env['RETENTION_DAYS'] ?? (getenv('RETENTION_DAYS') ?: '180'),
             'admin_username' => $env['ADMIN_USERNAME'] ?? (getenv('ADMIN_USERNAME') ?: 'admin'),
             'login_rate_limit_max' => (string) 5,
             'login_rate_limit_window' => (string) 15,
@@ -380,6 +655,7 @@ final class AdminController
             'turnstile_secret',
             'database_path',
             'ip_hash_secret',
+            'retention_days',
             'admin_username',
         ];
 
@@ -425,6 +701,8 @@ final class AdminController
             throw new InvalidArgumentException('IP hash secret must be at least 16 characters.');
         }
 
+        $retentionDays = max(1, (int) ($input['retention_days'] ?? 180));
+
         $adminUsername = trim((string) ($input['admin_username'] ?? ''));
 
         if ($adminUsername === '') {
@@ -456,6 +734,7 @@ final class AdminController
                 'TURNSTILE_SECRET' => trim((string) ($input['turnstile_secret'] ?? '')),
                 'DATABASE_PATH' => $databasePath,
                 'IP_HASH_SECRET' => $ipHashSecret,
+                'RETENTION_DAYS' => (string) $retentionDays,
                 'ADMIN_USERNAME' => $adminUsername,
             ],
             'new_admin_password' => $newPassword,
@@ -479,6 +758,32 @@ final class AdminController
         $this->writeEnvFile($envUpdates);
         $this->writeAdminConfig($settings['login_rate_limit']);
         $this->writeSecurityConfig($settings['blocked_ips']);
+        $this->recordAudit('settings.update', 'Updated global settings.');
+    }
+
+    private function sendTestEmail(string $recipient): string
+    {
+        if ($this->mailSender === null) {
+            return 'Unable to send test email: mail service is not available.';
+        }
+
+        $recipient = trim($recipient);
+
+        if (!filter_var($recipient, FILTER_VALIDATE_EMAIL)) {
+            return 'Unable to send test email: enter a valid recipient.';
+        }
+
+        try {
+            $this->mailSender->send($recipient, 'formflow test email', [
+                'message' => 'SMTP settings are working.',
+                'sent_at' => gmdate('c'),
+            ]);
+            $this->recordAudit('settings.test_email', 'Sent test email to ' . $recipient . '.');
+
+            return 'Test email sent to ' . $recipient . '.';
+        } catch (Throwable $exception) {
+            return 'Unable to send test email: ' . $exception->getMessage();
+        }
     }
 
     private function assertSafeEnvValue(string $field, string $value): void
@@ -679,13 +984,96 @@ final class AdminController
         }
     }
 
+    private function handleUsers(): array
+    {
+        if ($this->adminUsers === null) {
+            return $this->htmlResponse(503, '<h1>Admin users are not available.</h1>');
+        }
+
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            if (!$this->verifyCsrfToken()) {
+                return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
+            }
+
+            $action = (string) ($_POST['action'] ?? 'create');
+
+            try {
+                if ($action === 'create') {
+                    $username = trim((string) ($_POST['username'] ?? ''));
+                    $password = (string) ($_POST['password'] ?? '');
+
+                    if (!preg_match('/^[A-Za-z0-9_.@-]{3,80}$/', $username)) {
+                        throw new InvalidArgumentException('Username must be 3-80 characters: letters, numbers, dot, dash, underscore, or @.');
+                    }
+
+                    if (strlen($password) < 8) {
+                        throw new InvalidArgumentException('Password must be at least 8 characters.');
+                    }
+
+                    $this->adminUsers->create($username, password_hash($password, PASSWORD_DEFAULT));
+                    $this->recordAudit('admin_user.create', 'Created admin user "' . $username . '".');
+                }
+
+                if ($action === 'delete') {
+                    $id = (int) ($_POST['id'] ?? 0);
+                    $this->adminUsers->delete($id);
+                    $this->recordAudit('admin_user.delete', 'Deleted admin user #' . $id . '.');
+                }
+            } catch (InvalidArgumentException $exception) {
+                return $this->htmlResponse(422, $this->renderUsers($exception->getMessage()));
+            }
+
+            return ['status' => 302, 'body' => '', 'redirect' => '/admin/users'];
+        }
+
+        return $this->htmlResponse(200, $this->renderUsers(null));
+    }
+
+    private function renderUsers(?string $error): string
+    {
+        return $this->render('users', [
+            'error' => $error,
+            'users' => $this->adminUsers?->list() ?? [],
+            'csrfToken' => $_SESSION['csrf_token'],
+            'bootstrapUsername' => $this->currentSettings()['admin_username'] ?? 'admin',
+        ], 'Admin users');
+    }
+
+    private function handleAudit(): array
+    {
+        return $this->htmlResponse(200, $this->render('audit', [
+            'entries' => $this->auditLog?->list() ?? [],
+        ], 'Audit log'));
+    }
+
+    private function setupStatus(): array
+    {
+        $settings = $this->currentSettings();
+        $databasePath = (string) ($settings['database_path'] ?? 'storage/submissions.sqlite');
+        $databaseDirectory = dirname(str_starts_with($databasePath, '/') ? $databasePath : dirname(__DIR__, 2) . '/' . $databasePath);
+        $mailReady = (string) ($settings['mail_from'] ?? '') !== ''
+            && ((string) ($settings['mailer_dsn'] ?? '') !== '' || (string) ($settings['smtp_host'] ?? '') !== '');
+
+        return [
+            'mail' => $mailReady ? 'Configured' : 'Needs SMTP',
+            'turnstile' => (string) ($settings['turnstile_secret'] ?? '') !== '' ? 'Configured' : 'Optional',
+            'storage' => is_dir($databaseDirectory) && is_writable($databaseDirectory) ? 'Writable' : 'Check storage',
+            'forms' => (string) count($this->forms),
+        ];
+    }
+
+    private function recordAudit(string $action, string $detail): void
+    {
+        $this->auditLog?->record($this->auth->username(), $action, $detail);
+    }
+
     /**
      * @param array<string, mixed> $input
      * @return array{0: string, 1: array<string, mixed>}
      */
-    private function formConfigFromPost(array $input): array
+    private function formConfigFromPost(array $input, ?string $fixedFormId = null): array
     {
-        $formId = trim((string) ($input['form_id'] ?? ''));
+        $formId = $fixedFormId ?? trim((string) ($input['form_id'] ?? ''));
 
         if (!preg_match('/^[a-z0-9][a-z0-9_-]{1,63}$/', $formId)) {
             throw new InvalidArgumentException('Form ID must be 2-64 lowercase letters, numbers, dashes, or underscores.');
@@ -725,6 +1113,7 @@ final class AdminController
             'allowed_origins' => $allowedOrigins,
             'subject' => $subject !== '' ? $subject : 'New form submission',
             'turnstile' => isset($input['turnstile']),
+            'require_api_key' => isset($input['require_api_key']),
             'rate_limit_per_ip' => [
                 'max' => $rateLimitMax,
                 'window_minutes' => $rateLimitWindow,
@@ -743,6 +1132,24 @@ final class AdminController
         }
 
         return [$formId, $config];
+    }
+
+    /** @param array<string, mixed> $config @return array<string, mixed> */
+    private function formValuesFromConfig(string $formId, array $config): array
+    {
+        return [
+            'form_id' => $formId,
+            'recipient' => (string) ($config['recipient'] ?? ''),
+            'allowed_origins' => implode(PHP_EOL, $config['allowed_origins'] ?? []),
+            'subject' => (string) ($config['subject'] ?? ''),
+            'success_redirect' => (string) ($config['success_redirect'] ?? ''),
+            'rate_limit_max' => (string) (int) (($config['rate_limit_per_ip']['max'] ?? 5)),
+            'rate_limit_window' => (string) (int) (($config['rate_limit_per_ip']['window_minutes'] ?? 10)),
+            'daily_limit' => (string) (int) ($config['daily_limit'] ?? 200),
+            'turnstile' => !empty($config['turnstile']) ? '1' : '',
+            'require_api_key' => !empty($config['require_api_key']) ? '1' : '',
+            'blocked_patterns' => implode(PHP_EOL, $config['blocked_patterns'] ?? []),
+        ];
     }
 
     /** @return list<string> */

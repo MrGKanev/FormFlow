@@ -92,6 +92,36 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         ]);
     }
 
+    public function markReviewed(int $submissionId): void
+    {
+        $statement = $this->pdo->prepare(
+            'UPDATE submissions
+             SET reviewed_at = :reviewed_at
+             WHERE id = :id'
+        );
+
+        $statement->execute([
+            'reviewed_at' => gmdate('c'),
+            'id' => $submissionId,
+        ]);
+    }
+
+    public function delete(int $submissionId): void
+    {
+        $statement = $this->pdo->prepare('DELETE FROM submissions WHERE id = :id');
+        $statement->execute(['id' => $submissionId]);
+    }
+
+    public function deleteOlderThan(int $days): int
+    {
+        $statement = $this->pdo->prepare(
+            'DELETE FROM submissions WHERE created_at < :cutoff'
+        );
+        $statement->execute(['cutoff' => gmdate('c', time() - (max(1, $days) * 86400))]);
+
+        return $statement->rowCount();
+    }
+
     public function find(int $submissionId): ?array
     {
         $statement = $this->pdo->prepare('SELECT * FROM submissions WHERE id = :id');
@@ -122,6 +152,33 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
 
         $statement->bindValue(':limit', $perPage, PDO::PARAM_INT);
         $statement->bindValue(':offset', $offset, PDO::PARAM_INT);
+        $statement->execute();
+
+        return $statement->fetchAll();
+    }
+
+    public function findForExport(?string $formId, ?string $status): array
+    {
+        [$where, $params] = $this->buildFilter($formId, $status);
+
+        $statement = $this->pdo->prepare(
+            'SELECT * FROM submissions' . $where . '
+             ORDER BY created_at DESC, id DESC'
+        );
+        $statement->execute($params);
+
+        return $statement->fetchAll();
+    }
+
+    public function deliveryLog(int $limit = 100): array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT id, form_id, status, error_message, created_at, sent_at, reviewed_at
+             FROM submissions
+             ORDER BY created_at DESC, id DESC
+             LIMIT :limit'
+        );
+        $statement->bindValue(':limit', max(1, $limit), PDO::PARAM_INT);
         $statement->execute();
 
         return $statement->fetchAll();
@@ -169,9 +226,17 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
                 status TEXT NOT NULL DEFAULT "received",
                 error_message TEXT,
                 created_at TEXT NOT NULL,
-                sent_at TEXT
+                sent_at TEXT,
+                reviewed_at TEXT
             )'
         );
+
+        $columns = $this->pdo->query('PRAGMA table_info(submissions)')->fetchAll();
+        $columnNames = array_column($columns, 'name');
+
+        if (!in_array('reviewed_at', $columnNames, true)) {
+            $this->pdo->exec('ALTER TABLE submissions ADD COLUMN reviewed_at TEXT');
+        }
 
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_submissions_form_id ON submissions(form_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status)');

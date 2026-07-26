@@ -12,8 +12,11 @@ $navItems = [
     '/admin' => 'Submissions',
     '/admin/forms' => 'Forms',
     '/admin/api-keys' => 'API keys',
+    '/admin/delivery' => 'Delivery',
     '/admin/whitelist' => 'IP whitelist',
     '/admin/settings' => 'Settings',
+    '/admin/users' => 'Users',
+    '/admin/audit' => 'Audit',
 ];
 
 $isActive = static function (string $href) use ($currentPath): bool {

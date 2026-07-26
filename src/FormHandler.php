@@ -73,7 +73,7 @@ final class FormHandler
             ];
         }
 
-        $this->assertApiKey($formId);
+        $this->assertApiKey($formId, !empty($config['require_api_key']));
 
         if (!empty($_POST['_website'])) {
             try {
@@ -172,11 +172,15 @@ final class FormHandler
         throw new InvalidArgumentException('Origin is not allowed.');
     }
 
-    private function assertApiKey(string $formId): void
+    private function assertApiKey(string $formId, bool $required): void
     {
         $expectedKey = $this->apiKeys->get($formId);
 
         if ($expectedKey === null) {
+            if ($required) {
+                throw new InvalidArgumentException('API key is required.');
+            }
+
             return;
         }
 

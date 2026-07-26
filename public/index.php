@@ -10,6 +10,8 @@ use formflow\Install\InstallController;
 use formflow\IpBlocklist;
 use formflow\MailService;
 use formflow\SqliteAdminWhitelistRepository;
+use formflow\SqliteAdminUserRepository;
+use formflow\SqliteAuditLogRepository;
 use formflow\SqliteFormApiKeyRepository;
 use formflow\SqliteFormRepository;
 use formflow\SqliteRateLimiter;
@@ -330,6 +332,13 @@ if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
     $adminConfig = require $root . '/config/admin.php';
     $allowedIps = $adminConfig['allowed_ips'] ?? [];
     $whitelistRepository = new SqliteAdminWhitelistRepository($databasePath);
+    $adminUsers = new SqliteAdminUserRepository($databasePath);
+    $auditLog = new SqliteAuditLogRepository($databasePath);
+    $mailService = new MailService(
+        mailerDsnFromEnv(),
+        getenv('MAIL_FROM') ?: '',
+        getenv('MAIL_FROM_NAME') ?: 'formflow'
+    );
 
     $adminController = new AdminController(
         new AdminAuth(
@@ -337,7 +346,8 @@ if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
             getenv('ADMIN_PASSWORD_HASH') ?: '',
             new SqliteRateLimiter($databasePath),
             (int) ($adminConfig['login_rate_limit']['max'] ?? 5),
-            (int) ($adminConfig['login_rate_limit']['window_minutes'] ?? 15)
+            (int) ($adminConfig['login_rate_limit']['window_minutes'] ?? 15),
+            $adminUsers
         ),
         new AdminIpWhitelist($allowedIps, $whitelistRepository),
         new SqliteSubmissionRepository($databasePath),
@@ -350,7 +360,10 @@ if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
         (getenv('APP_ENV') ?: 'production') !== 'production',
         $root . '/.env',
         $root . '/config/admin.php',
-        $root . '/config/security.php'
+        $root . '/config/security.php',
+        $adminUsers,
+        $auditLog,
+        $mailService
     );
 
     $result = $adminController->handle($formId);
@@ -362,7 +375,14 @@ if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
         exit;
     }
 
-    header('Content-Type: text/html; charset=utf-8');
+    foreach (($result['headers'] ?? []) as $header => $value) {
+        header($header . ': ' . $value);
+    }
+
+    if (empty($result['headers'])) {
+        header('Content-Type: text/html; charset=utf-8');
+    }
+
     echo $result['body'];
     exit;
 }

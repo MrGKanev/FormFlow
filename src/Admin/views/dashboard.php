@@ -5,6 +5,7 @@
 /** @var int $perPage */
 /** @var string|null $formId */
 /** @var string|null $status */
+/** @var array<string, string> $setupStatus */
 $statusOptions = [
     '' => 'All statuses',
     'received' => 'Received',
@@ -53,6 +54,18 @@ $pageUrl = static function (int $targetPage) use ($formId, $status): string {
         <p class="stat-label">Per page</p>
         <p class="stat-value"><?= $perPage ?></p>
     </div>
+    <div class="stat-card">
+        <p class="stat-label">Mail</p>
+        <p class="stat-value"><?= htmlspecialchars($setupStatus['mail'] ?? 'Check', ENT_QUOTES, 'UTF-8') ?></p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Turnstile</p>
+        <p class="stat-value"><?= htmlspecialchars($setupStatus['turnstile'] ?? 'Check', ENT_QUOTES, 'UTF-8') ?></p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Storage</p>
+        <p class="stat-value"><?= htmlspecialchars($setupStatus['storage'] ?? 'Check', ENT_QUOTES, 'UTF-8') ?></p>
+    </div>
 </div>
 
 <form method="GET" action="/admin" class="filter-form">
@@ -73,6 +86,7 @@ $pageUrl = static function (int $targetPage) use ($formId, $status): string {
     <div class="form-actions">
         <button type="submit">Filter</button>
         <a href="/admin" class="button secondary">Reset</a>
+        <a href="/admin/export?<?= htmlspecialchars(http_build_query(['form_id' => $formId, 'status' => $status]), ENT_QUOTES, 'UTF-8') ?>" class="button secondary">Export CSV</a>
     </div>
 </form>
 

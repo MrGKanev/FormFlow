@@ -143,6 +143,7 @@ final class InstallController
             '',
             "DATABASE_PATH='storage/submissions.sqlite'",
             "IP_HASH_SECRET='" . $ipHashSecret . "'",
+            "RETENTION_DAYS='180'",
             '',
             "ADMIN_USERNAME='" . $input['admin_username'] . "'",
             "ADMIN_PASSWORD_HASH='" . $passwordHash . "'",

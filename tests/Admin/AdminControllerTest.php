@@ -7,12 +7,18 @@ namespace formflow\Tests\Admin;
 use formflow\Admin\AdminController;
 use formflow\AdminAuth;
 use formflow\AdminIpWhitelist;
+use formflow\AdminUserRepositoryInterface;
+use formflow\AuditLogRepositoryInterface;
 use formflow\FormApiKeyRepositoryInterface;
+use formflow\MailSenderInterface;
+use formflow\SqliteAdminUserRepository;
 use formflow\SqliteAdminWhitelistRepository;
+use formflow\SqliteAuditLogRepository;
 use formflow\SqliteFormApiKeyRepository;
 use formflow\SqliteFormRepository;
 use formflow\SqliteRateLimiter;
 use formflow\SqliteSubmissionRepository;
+use formflow\Tests\Fakes\FakeMailSender;
 use PHPUnit\Framework\TestCase;
 
 final class AdminControllerTest extends TestCase
@@ -52,7 +58,10 @@ final class AdminControllerTest extends TestCase
         bool $devLoginEnabled = false,
         ?string $envPath = null,
         ?string $adminConfigPath = null,
-        ?string $securityConfigPath = null
+        ?string $securityConfigPath = null,
+        ?AdminUserRepositoryInterface $adminUsers = null,
+        ?AuditLogRepositoryInterface $auditLog = null,
+        ?MailSenderInterface $mailSender = null
     ): AdminController {
         $whitelistRepository ??= new SqliteAdminWhitelistRepository(':memory:');
         $forms ??= [
@@ -66,7 +75,8 @@ final class AdminControllerTest extends TestCase
                 password_hash(self::PASSWORD, PASSWORD_DEFAULT),
                 new SqliteRateLimiter(':memory:'),
                 5,
-                15
+                15,
+                $adminUsers
             ),
             new AdminIpWhitelist($allowedIps, $whitelistRepository),
             $submissions ?? new SqliteSubmissionRepository(':memory:'),
@@ -79,7 +89,10 @@ final class AdminControllerTest extends TestCase
             $devLoginEnabled,
             $envPath,
             $adminConfigPath,
-            $securityConfigPath
+            $securityConfigPath,
+            $adminUsers,
+            $auditLog,
+            $mailSender
         );
     }
 
@@ -107,6 +120,7 @@ final class AdminControllerTest extends TestCase
             "TURNSTILE_SECRET='turnstile-secret'",
             "DATABASE_PATH='storage/submissions.sqlite'",
             "IP_HASH_SECRET='1234567890123456'",
+            "RETENTION_DAYS='180'",
             "ADMIN_USERNAME='admin'",
             "ADMIN_PASSWORD_HASH='" . password_hash(self::PASSWORD, PASSWORD_DEFAULT) . "'",
             '',
@@ -543,19 +557,23 @@ final class AdminControllerTest extends TestCase
         $this->assertSame(200, $result['status']);
         $this->assertStringContainsString('contact', $result['body']);
         $this->assertStringContainsString('support@example.com', $result['body']);
+        $this->assertStringContainsString('href="/admin/forms/new"', $result['body']);
+        $this->assertStringNotContainsString('name="form_id"', $result['body']);
         $this->assertStringNotContainsString('name="allowed_fields[]"', $result['body']);
         $this->assertStringNotContainsString('name="custom_allowed_fields"', $result['body']);
         $this->assertStringNotContainsString('name="required_fields[]"', $result['body']);
         $this->assertStringNotContainsString('name="custom_required_fields"', $result['body']);
     }
 
-    public function testFormsPagePostCreatesFormAndRedirects(): void
+    public function testNewFormPagePostCreatesFormAndRedirects(): void
     {
         $formRepository = new SqliteFormRepository(':memory:');
         $controller = $this->makeController(formRepository: $formRepository);
         $this->login($controller);
 
-        $controller->handle('admin/forms');
+        $newPage = $controller->handle('admin/forms/new');
+        $this->assertSame(200, $newPage['status']);
+        $this->assertStringContainsString('Create form', $newPage['body']);
         $token = $this->csrfToken();
 
         $_SERVER['REQUEST_METHOD'] = 'POST';
@@ -573,7 +591,7 @@ final class AdminControllerTest extends TestCase
             'csrf_token' => $token,
         ];
 
-        $result = $controller->handle('admin/forms');
+        $result = $controller->handle('admin/forms/new');
 
         $this->assertSame(302, $result['status']);
         $this->assertSame('/admin/forms', $result['redirect']);
@@ -586,13 +604,13 @@ final class AdminControllerTest extends TestCase
         $this->assertSame(['max' => 3, 'window_minutes' => 15], $forms['newsletter']['rate_limit_per_ip']);
     }
 
-    public function testFormsPagePostRejectsDuplicateFormId(): void
+    public function testNewFormPagePostRejectsDuplicateFormId(): void
     {
         $formRepository = new SqliteFormRepository(':memory:');
         $controller = $this->makeController(formRepository: $formRepository);
         $this->login($controller);
 
-        $controller->handle('admin/forms');
+        $controller->handle('admin/forms/new');
         $token = $this->csrfToken();
 
         $_SERVER['REQUEST_METHOD'] = 'POST';
@@ -603,13 +621,13 @@ final class AdminControllerTest extends TestCase
             'csrf_token' => $token,
         ];
 
-        $result = $controller->handle('admin/forms');
+        $result = $controller->handle('admin/forms/new');
 
         $this->assertSame(422, $result['status']);
         $this->assertSame([], $formRepository->all());
     }
 
-    public function testFormsPagePostWithoutCsrfTokenReturns419(): void
+    public function testNewFormPagePostWithoutCsrfTokenReturns419(): void
     {
         $formRepository = new SqliteFormRepository(':memory:');
         $controller = $this->makeController(formRepository: $formRepository);
@@ -622,7 +640,7 @@ final class AdminControllerTest extends TestCase
             'allowed_origins' => 'https://example.com',
         ];
 
-        $result = $controller->handle('admin/forms');
+        $result = $controller->handle('admin/forms/new');
 
         $this->assertSame(419, $result['status']);
         $this->assertSame([], $formRepository->all());
@@ -681,6 +699,7 @@ final class AdminControllerTest extends TestCase
                 'turnstile_secret' => 'new-turnstile',
                 'database_path' => 'storage/new.sqlite',
                 'ip_hash_secret' => 'abcdef1234567890',
+                'retention_days' => '90',
                 'admin_username' => 'owner',
                 'admin_password' => 'new-password',
                 'login_rate_limit_max' => '9',
@@ -702,6 +721,7 @@ final class AdminControllerTest extends TestCase
             $this->assertStringContainsString("SMTP_ENCRYPTION='ssl'", (string) $env);
             $this->assertStringContainsString("SMTP_USERNAME='new-user'", (string) $env);
             $this->assertStringContainsString("SMTP_PASSWORD='new-pass'", (string) $env);
+            $this->assertStringContainsString("RETENTION_DAYS='90'", (string) $env);
             $this->assertStringContainsString("ADMIN_USERNAME='owner'", (string) $env);
             $this->assertMatchesRegularExpression("/ADMIN_PASSWORD_HASH='\\\$2y\\\$/", (string) $env);
 
@@ -747,6 +767,7 @@ final class AdminControllerTest extends TestCase
                 'turnstile_secret' => '',
                 'database_path' => 'storage/submissions.sqlite',
                 'ip_hash_secret' => '1234567890123456',
+                'retention_days' => '180',
                 'admin_username' => 'admin',
                 'login_rate_limit_max' => '5',
                 'login_rate_limit_window' => '15',
@@ -762,5 +783,162 @@ final class AdminControllerTest extends TestCase
         } finally {
             $this->removeSettingsFiles($files);
         }
+    }
+
+    public function testDbAdminUserCanLogin(): void
+    {
+        $users = new SqliteAdminUserRepository(':memory:');
+        $users->create('teammate', password_hash('team-password', PASSWORD_DEFAULT));
+        $controller = $this->makeController(adminUsers: $users);
+
+        $controller->handle('admin/login');
+        $token = $this->csrfToken();
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = ['username' => 'teammate', 'password' => 'team-password', 'csrf_token' => $token];
+
+        $result = $controller->handle('admin/login');
+
+        $this->assertSame(302, $result['status']);
+        $this->assertSame('/admin', $result['redirect']);
+    }
+
+    public function testUsersPageCreatesAdminUser(): void
+    {
+        $users = new SqliteAdminUserRepository(':memory:');
+        $audit = new SqliteAuditLogRepository(':memory:');
+        $controller = $this->makeController(adminUsers: $users, auditLog: $audit);
+        $this->login($controller);
+
+        $controller->handle('admin/users');
+        $token = $this->csrfToken();
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = [
+            'action' => 'create',
+            'username' => 'second-admin',
+            'password' => 'second-password',
+            'csrf_token' => $token,
+        ];
+
+        $result = $controller->handle('admin/users');
+
+        $this->assertSame(302, $result['status']);
+        $this->assertNotNull($users->findByUsername('second-admin'));
+        $this->assertSame('admin_user.create', $audit->list()[0]['action']);
+    }
+
+    public function testFormEditUpdatesStoredForm(): void
+    {
+        $formRepository = new SqliteFormRepository(':memory:');
+        $formRepository->create('newsletter', [
+            'recipient' => 'old@example.com',
+            'allowed_origins' => ['https://example.com'],
+            'subject' => 'Old',
+        ]);
+        $controller = $this->makeController(
+            forms: ['newsletter' => $formRepository->all()['newsletter']],
+            formRepository: $formRepository
+        );
+        $this->login($controller);
+
+        $controller->handle('admin/forms/newsletter/edit');
+        $token = $this->csrfToken();
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = [
+            'recipient' => 'new@example.com',
+            'allowed_origins' => 'https://example.com',
+            'subject' => 'New',
+            'success_redirect' => '',
+            'rate_limit_max' => '5',
+            'rate_limit_window' => '10',
+            'daily_limit' => '200',
+            'require_api_key' => '1',
+            'csrf_token' => $token,
+        ];
+
+        $result = $controller->handle('admin/forms/newsletter/edit');
+
+        $this->assertSame(302, $result['status']);
+        $forms = $formRepository->all();
+        $this->assertSame('new@example.com', $forms['newsletter']['recipient']);
+        $this->assertTrue($forms['newsletter']['require_api_key']);
+    }
+
+    public function testSubmissionActionsReviewDeleteAndExport(): void
+    {
+        $submissions = new SqliteSubmissionRepository(':memory:');
+        $id = $submissions->create('contact', ['name' => 'Ada'], null);
+        $audit = new SqliteAuditLogRepository(':memory:');
+        $controller = $this->makeController(['203.0.113.10'], $submissions, auditLog: $audit);
+        $this->login($controller);
+
+        $controller->handle('admin/submissions/' . $id);
+        $token = $this->csrfToken();
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = ['action' => 'review', 'csrf_token' => $token];
+        $reviewResult = $controller->handle('admin/submissions/' . $id . '/action');
+        $this->assertSame(302, $reviewResult['status']);
+        $this->assertNotEmpty($submissions->find($id)['reviewed_at']);
+
+        $_SERVER['REQUEST_METHOD'] = 'GET';
+        $_POST = [];
+        $export = $controller->handle('admin/export');
+        $this->assertSame(200, $export['status']);
+        $this->assertStringContainsString('payload_json', $export['body']);
+        $this->assertSame('text/csv; charset=utf-8', $export['headers']['Content-Type']);
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = ['action' => 'delete', 'csrf_token' => $token];
+        $deleteResult = $controller->handle('admin/submissions/' . $id . '/action');
+        $this->assertSame(302, $deleteResult['status']);
+        $this->assertNull($submissions->find($id));
+        $this->assertNotSame([], $audit->list());
+    }
+
+    public function testSubmissionResendUsesMailSender(): void
+    {
+        $submissions = new SqliteSubmissionRepository(':memory:');
+        $id = $submissions->create('contact', ['email' => 'ada@example.com'], null, 'failed');
+        $mailSender = new FakeMailSender();
+        $controller = $this->makeController(
+            ['203.0.113.10'],
+            $submissions,
+            forms: ['contact' => ['recipient' => 'hello@example.com', 'subject' => 'Contact']],
+            mailSender: $mailSender
+        );
+        $this->login($controller);
+
+        $controller->handle('admin/submissions/' . $id);
+        $token = $this->csrfToken();
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = ['action' => 'resend', 'csrf_token' => $token];
+
+        $result = $controller->handle('admin/submissions/' . $id . '/action');
+
+        $this->assertSame(302, $result['status']);
+        $this->assertCount(1, $mailSender->sentMessages);
+        $this->assertSame('sent', $submissions->find($id)['status']);
+    }
+
+    public function testDeliveryAndAuditPagesRender(): void
+    {
+        $submissions = new SqliteSubmissionRepository(':memory:');
+        $submissions->create('contact', ['name' => 'Ada'], null, 'failed');
+        $audit = new SqliteAuditLogRepository(':memory:');
+        $audit->record('admin', 'test.action', 'Something happened.');
+        $controller = $this->makeController(['203.0.113.10'], $submissions, auditLog: $audit);
+        $this->login($controller);
+
+        $delivery = $controller->handle('admin/delivery');
+        $auditPage = $controller->handle('admin/audit');
+
+        $this->assertSame(200, $delivery['status']);
+        $this->assertStringContainsString('Delivery log', $delivery['body']);
+        $this->assertSame(200, $auditPage['status']);
+        $this->assertStringContainsString('test.action', $auditPage['body']);
     }
 }
