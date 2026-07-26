@@ -28,34 +28,32 @@
     --radius-sm: 6px;
 }
 
-@media (prefers-color-scheme: dark) {
-    :root {
-        color-scheme: dark;
-        --bg: #101312;
-        --bg-top: #171a18;
-        --surface: #191d1b;
-        --surface-2: #151917;
-        --text: #edf1ed;
-        --muted: #a0aaa4;
-        --subtle: #7f8983;
-        --border: #2c3530;
-        --border-strong: #3a453f;
-        --accent: #78d6c8;
-        --accent-hover: #a5eadf;
-        --accent-soft: #12342f;
-        --accent-text: #07110f;
-        --danger: #ff9b90;
-        --danger-bg: #321b18;
-        --success: #88e6a7;
-        --success-bg: #143522;
-        --warning: #ffd176;
-        --warning-bg: #332711;
-        --blocked: #b8adff;
-        --blocked-bg: #272141;
-        --code-bg: #222922;
-        --shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
-        --ring: 0 0 0 3px rgba(120, 214, 200, 0.2);
-    }
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #101312;
+    --bg-top: #171a18;
+    --surface: #191d1b;
+    --surface-2: #151917;
+    --text: #edf1ed;
+    --muted: #a0aaa4;
+    --subtle: #7f8983;
+    --border: #2c3530;
+    --border-strong: #3a453f;
+    --accent: #78d6c8;
+    --accent-hover: #a5eadf;
+    --accent-soft: #12342f;
+    --accent-text: #07110f;
+    --danger: #ff9b90;
+    --danger-bg: #321b18;
+    --success: #88e6a7;
+    --success-bg: #143522;
+    --warning: #ffd176;
+    --warning-bg: #332711;
+    --blocked: #b8adff;
+    --blocked-bg: #272141;
+    --code-bg: #222922;
+    --shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
+    --ring: 0 0 0 3px rgba(120, 214, 200, 0.2);
 }
 
 * {
@@ -162,10 +160,8 @@ nav.top {
     backdrop-filter: blur(16px);
 }
 
-@media (prefers-color-scheme: dark) {
-    nav.top {
-        background: rgba(23, 26, 24, 0.84);
-    }
+:root[data-theme="dark"] nav.top {
+    background: rgba(23, 26, 24, 0.84);
 }
 
 nav.top a {
@@ -196,6 +192,12 @@ nav.top a {
     gap: 4px;
 }
 
+.nav-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .nav-links a,
 .nav-logout {
     display: inline-flex;
@@ -217,6 +219,56 @@ nav.top a {
 .nav-links a[aria-current="page"] {
     background: var(--accent-soft);
     color: var(--accent-hover);
+}
+
+.theme-corner {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 30;
+}
+
+.theme-toggle {
+    gap: 8px;
+    min-height: 36px;
+    padding: 0 10px;
+    border-color: var(--border-strong);
+    background: color-mix(in srgb, var(--surface), transparent 8%);
+    color: var(--text);
+    box-shadow: 0 10px 24px rgba(22, 29, 24, 0.08);
+    backdrop-filter: blur(14px);
+}
+
+.theme-toggle:hover {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent-hover);
+}
+
+.theme-toggle-icon {
+    position: relative;
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+    border: 2px solid currentColor;
+    border-radius: 50%;
+}
+
+.theme-toggle-icon::after {
+    position: absolute;
+    inset: 2px 0 0 5px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    content: "";
+}
+
+:root[data-theme="dark"] .theme-toggle-icon::after {
+    inset: -3px auto auto 5px;
+    width: 10px;
+    height: 14px;
+    background: var(--surface);
 }
 
 .page-header {
@@ -272,8 +324,27 @@ form:not(.inline) {
     align-items: start;
 }
 
+.settings-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+    align-items: start;
+}
+
+.settings-actions {
+    justify-content: flex-end;
+}
+
 form.inline {
     display: inline;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    box-shadow: none;
+}
+
+form.settings-form {
     margin: 0;
     padding: 0;
     border: 0;
@@ -487,6 +558,12 @@ button.secondary:hover,
     border-color: var(--accent);
     background: var(--accent-soft);
     color: var(--accent-hover);
+}
+
+.button.compact {
+    min-height: 32px;
+    padding: 0 0.7rem;
+    font-size: 0.82rem;
 }
 
 .table-wrap {
@@ -766,6 +843,38 @@ ul.features li strong {
     list-style: none;
 }
 
+.health-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.health-card {
+    min-height: 132px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+}
+
+.health-card h2 {
+    margin-bottom: 0.35rem;
+}
+
+.health-card p {
+    margin-bottom: 0;
+    color: var(--muted);
+}
+
+.health-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
 .form-list {
     display: grid;
     gap: 10px;
@@ -869,13 +978,24 @@ ul.features li strong {
     }
 
     .nav-links {
-        width: calc(100% - 86px);
+        width: 100%;
         overflow-x: auto;
         padding-bottom: 2px;
     }
 
+    .nav-actions {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .nav-actions .theme-toggle {
+        width: auto;
+        margin-left: 0;
+    }
+
     .nav-logout {
-        margin-left: auto;
+        width: auto;
+        margin-left: 0;
     }
 
     .page-header {
@@ -891,6 +1011,8 @@ ul.features li strong {
     .dashboard-summary,
     .option-grid,
     .split-grid,
+    .settings-grid,
+    .health-grid,
     ul.features {
         grid-template-columns: 1fr;
     }
@@ -938,6 +1060,10 @@ ul.features li strong {
     button,
     .button {
         width: 100%;
+    }
+
+    .theme-toggle {
+        width: auto;
     }
 
     td.actions button,

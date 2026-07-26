@@ -25,6 +25,182 @@ if (is_file($root . '/.env')) {
     (new Dotenv())->usePutenv()->load($root . '/.env');
 }
 
+function wantsJsonResponse(): bool
+{
+    if (($_GET['format'] ?? null) === 'json') {
+        return true;
+    }
+
+    $accept = strtolower((string) ($_SERVER['HTTP_ACCEPT'] ?? ''));
+
+    return str_contains($accept, 'application/json') && !str_contains($accept, 'text/html');
+}
+
+function databasePath(string $root): string
+{
+    $databasePath = getenv('DATABASE_PATH') ?: 'storage/submissions.sqlite';
+
+    if (!str_starts_with($databasePath, '/')) {
+        $databasePath = $root . '/' . ltrim($databasePath, '/');
+    }
+
+    return $databasePath;
+}
+
+function mailerDsnFromEnv(): string
+{
+    $advancedDsn = trim((string) (getenv('MAILER_DSN') ?: ''));
+
+    if ($advancedDsn !== '') {
+        return $advancedDsn;
+    }
+
+    $host = trim((string) (getenv('SMTP_HOST') ?: ''));
+
+    if ($host === '') {
+        return 'null://null';
+    }
+
+    $port = (int) (getenv('SMTP_PORT') ?: 587);
+    $encryption = strtolower(trim((string) (getenv('SMTP_ENCRYPTION') ?: 'tls')));
+    $scheme = $encryption === 'ssl' ? 'smtps' : 'smtp';
+    $username = (string) (getenv('SMTP_USERNAME') ?: '');
+    $password = (string) (getenv('SMTP_PASSWORD') ?: '');
+    $auth = $username !== ''
+        ? rawurlencode($username) . ':' . rawurlencode($password) . '@'
+        : '';
+    $query = $encryption === 'none' ? '?auto_tls=0' : ($encryption === 'tls' ? '?require_tls=1' : '');
+
+    return sprintf('%s://%s%s:%d%s', $scheme, $auth, $host, $port, $query);
+}
+
+function healthChecks(string $root, bool $envExists): array
+{
+    $databasePath = databasePath($root);
+    $databaseDirectory = dirname($databasePath);
+    $requiredExtensions = ['curl', 'mbstring', 'pdo_sqlite'];
+    $checks = [];
+
+    $checks[] = [
+        'label' => 'Installation',
+        'detail' => $envExists ? '.env found' : 'setup required',
+        'ok' => $envExists,
+        'status' => $envExists ? 'good' : 'warn',
+    ];
+
+    foreach ($requiredExtensions as $extension) {
+        $loaded = extension_loaded($extension);
+        $checks[] = [
+            'label' => 'PHP extension: ' . $extension,
+            'detail' => $loaded ? 'loaded' : 'not loaded',
+            'ok' => $loaded,
+            'status' => $loaded ? 'good' : 'danger',
+        ];
+    }
+
+    $databaseReady = is_file($databasePath)
+        ? is_readable($databasePath) && is_writable($databasePath)
+        : is_dir($databaseDirectory) && is_writable($databaseDirectory);
+
+    $checks[] = [
+        'label' => 'Database',
+        'detail' => $databaseReady ? 'storage ready' : 'database storage is not writable',
+        'ok' => $databaseReady,
+        'status' => $databaseReady ? 'good' : 'danger',
+    ];
+
+    $mailReady = ((getenv('MAILER_DSN') ?: '') !== '' || (getenv('SMTP_HOST') ?: '') !== '')
+        && (getenv('MAIL_FROM') ?: '') !== '';
+    $checks[] = [
+        'label' => 'Mail delivery',
+        'detail' => $mailReady ? 'configured' : 'missing SMTP settings or sender',
+        'ok' => $mailReady,
+        'status' => $mailReady ? 'good' : 'warn',
+    ];
+
+    $turnstileReady = (getenv('TURNSTILE_SECRET') ?: '') !== '';
+    $checks[] = [
+        'label' => 'Turnstile',
+        'detail' => $turnstileReady ? 'configured' : 'not configured',
+        'ok' => true,
+        'status' => $turnstileReady ? 'good' : 'warn',
+    ];
+
+    return $checks;
+}
+
+function renderHealthPage(array $health): string
+{
+    $overallClass = $health['ok'] ? 'good' : 'danger';
+    $overallText = $health['ok'] ? 'Operational' : 'Needs attention';
+    $checksHtml = '';
+
+    foreach ($health['checks'] as $check) {
+        $badgeText = match ($check['status']) {
+            'good' => 'OK',
+            'warn' => 'Check',
+            default => 'Fail',
+        };
+
+        $checksHtml .= sprintf(
+            '<article class="health-card"><div class="section-heading"><h2>%s</h2><span class="badge %s">%s</span></div><p>%s</p></article>',
+            htmlspecialchars((string) $check['label'], ENT_QUOTES, 'UTF-8'),
+            htmlspecialchars((string) $check['status'], ENT_QUOTES, 'UTF-8'),
+            $badgeText,
+            htmlspecialchars((string) $check['detail'], ENT_QUOTES, 'UTF-8')
+        );
+    }
+
+    return <<<HTML
+    <!DOCTYPE html>
+    <html lang="en" data-theme="light">
+    <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>formflow health</title>
+    <script>
+    try {
+        document.documentElement.dataset.theme = localStorage.getItem('formflow-theme') === 'dark' ? 'dark' : 'light';
+    } catch (error) {
+        document.documentElement.dataset.theme = 'light';
+    }
+    </script>
+    <link rel="stylesheet" href="/assets/style.css">
+    <script src="/assets/theme.js" defer></script>
+    </head>
+    <body>
+    <div class="theme-corner">
+        <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch to dark theme" aria-pressed="false">
+            <span class="theme-toggle-icon" aria-hidden="true"></span>
+            <span data-theme-label>Dark</span>
+        </button>
+    </div>
+    <main class="container">
+        <div class="page-header">
+            <div>
+                <p class="page-kicker">Public status</p>
+                <h1>Health check</h1>
+                <p class="page-meta">Current service readiness for formflow.</p>
+            </div>
+        </div>
+
+        <section class="panel health-status">
+            <div>
+                <h2>Service status</h2>
+                <p class="page-meta">Checked at <time datetime="{$health['time']}">{$health['time']}</time></p>
+            </div>
+            <span class="badge {$overallClass}">{$overallText}</span>
+        </section>
+
+        <div class="health-grid">
+            {$checksHtml}
+        </div>
+    </main>
+    </body>
+    </html>
+    HTML;
+}
+
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 $formId = trim((string) $path, '/');
 
@@ -69,14 +245,28 @@ if ($formId === '') {
     header('Content-Type: text/html; charset=utf-8');
     echo <<<'HTML'
     <!DOCTYPE html>
-    <html lang="en">
+    <html lang="en" data-theme="light">
     <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>formflow</title>
+    <script>
+    try {
+        document.documentElement.dataset.theme = localStorage.getItem('formflow-theme') === 'dark' ? 'dark' : 'light';
+    } catch (error) {
+        document.documentElement.dataset.theme = 'light';
+    }
+    </script>
     <link rel="stylesheet" href="/assets/style.css">
+    <script src="/assets/theme.js" defer></script>
     </head>
     <body>
+    <div class="theme-corner">
+        <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch to dark theme" aria-pressed="false">
+            <span class="theme-toggle-icon" aria-hidden="true"></span>
+            <span data-theme-label>Dark</span>
+        </button>
+    </div>
     <main class="container home-shell">
         <section class="home-hero">
             <p class="home-kicker">Self-hosted form backend</p>
@@ -107,22 +297,29 @@ if ($formId === '') {
 }
 
 if ($formId === 'health') {
-    header('Content-Type: application/json; charset=utf-8');
-
-    echo json_encode([
-        'status' => 'ok',
+    $checks = healthChecks($root, $envExists);
+    $health = [
+        'status' => in_array(false, array_column($checks, 'ok'), true) ? 'needs_attention' : 'ok',
+        'ok' => !in_array(false, array_column($checks, 'ok'), true),
         'service' => 'formflow',
+        'environment' => getenv('APP_ENV') ?: 'production',
         'time' => gmdate('c'),
-    ], JSON_UNESCAPED_SLASHES);
+        'checks' => $checks,
+    ];
+
+    if (wantsJsonResponse()) {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode($health, JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+
+    header('Content-Type: text/html; charset=utf-8');
+    echo renderHealthPage($health);
 
     exit;
 }
 
-$databasePath = getenv('DATABASE_PATH') ?: 'storage/submissions.sqlite';
-
-if (!str_starts_with($databasePath, '/')) {
-    $databasePath = $root . '/' . ltrim($databasePath, '/');
-}
+$databasePath = databasePath($root);
 
 $ipHashSecret = getenv('IP_HASH_SECRET') ?: 'change-me';
 $configuredForms = require $root . '/config/forms.php';
@@ -150,7 +347,10 @@ if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
         new SqliteFormApiKeyRepository($databasePath),
         $forms,
         $formRepository,
-        (getenv('APP_ENV') ?: 'production') !== 'production'
+        (getenv('APP_ENV') ?: 'production') !== 'production',
+        $root . '/.env',
+        $root . '/config/admin.php',
+        $root . '/config/security.php'
     );
 
     $result = $adminController->handle($formId);
@@ -185,7 +385,7 @@ try {
     $handler = new FormHandler(
         $forms,
         new MailService(
-            getenv('MAILER_DSN') ?: '',
+            mailerDsnFromEnv(),
             getenv('MAIL_FROM') ?: '',
             getenv('MAIL_FROM_NAME') ?: 'formflow'
         ),

@@ -13,6 +13,7 @@ $navItems = [
     '/admin/forms' => 'Forms',
     '/admin/api-keys' => 'API keys',
     '/admin/whitelist' => 'IP whitelist',
+    '/admin/settings' => 'Settings',
 ];
 
 $isActive = static function (string $href) use ($currentPath): bool {
@@ -24,12 +25,20 @@ $isActive = static function (string $href) use ($currentPath): bool {
 };
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>formflow admin - <?= htmlspecialchars($title, ENT_QUOTES, 'UTF-8') ?></title>
+<script>
+try {
+    document.documentElement.dataset.theme = localStorage.getItem('formflow-theme') === 'dark' ? 'dark' : 'light';
+} catch (error) {
+    document.documentElement.dataset.theme = 'light';
+}
+</script>
 <link rel="stylesheet" href="/assets/style.css">
+<script src="/assets/theme.js" defer></script>
 </head>
 <body class="<?= $bodyClass ?>">
 <?php if ($withNav): ?>
@@ -42,8 +51,21 @@ $isActive = static function (string $href) use ($currentPath): bool {
             </a>
         <?php endforeach; ?>
     </div>
-    <a href="/admin/logout" class="nav-logout">Log out</a>
+    <div class="nav-actions">
+        <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch to dark theme" aria-pressed="false">
+            <span class="theme-toggle-icon" aria-hidden="true"></span>
+            <span data-theme-label>Dark</span>
+        </button>
+        <a href="/admin/logout" class="nav-logout">Log out</a>
+    </div>
 </nav>
+<?php else: ?>
+<div class="theme-corner">
+    <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch to dark theme" aria-pressed="false">
+        <span class="theme-toggle-icon" aria-hidden="true"></span>
+        <span data-theme-label>Dark</span>
+    </button>
+</div>
 <?php endif; ?>
 <main class="container<?= htmlspecialchars($containerClass, ENT_QUOTES, 'UTF-8') ?>">
 <?= $content ?>

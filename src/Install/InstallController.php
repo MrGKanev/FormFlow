@@ -13,6 +13,11 @@ final class InstallController
     private const RAW_STRING_FIELDS = [
         'app_url',
         'mailer_dsn',
+        'smtp_host',
+        'smtp_port',
+        'smtp_encryption',
+        'smtp_username',
+        'smtp_password',
         'mail_from',
         'mail_from_name',
         'turnstile_secret',
@@ -88,6 +93,18 @@ final class InstallController
             }
         }
 
+        $smtpPort = trim((string) ($input['smtp_port'] ?? ''));
+
+        if ($smtpPort !== '' && (!ctype_digit($smtpPort) || (int) $smtpPort < 1 || (int) $smtpPort > 65535)) {
+            return 'SMTP port must be between 1 and 65535.';
+        }
+
+        $smtpEncryption = trim((string) ($input['smtp_encryption'] ?? 'tls'));
+
+        if (!in_array($smtpEncryption, ['tls', 'ssl', 'none'], true)) {
+            return 'SMTP encryption must be TLS, SSL, or None.';
+        }
+
         return null;
     }
 
@@ -95,6 +112,11 @@ final class InstallController
     {
         $appUrl = trim((string) ($input['app_url'] ?? ''));
         $mailerDsn = trim((string) ($input['mailer_dsn'] ?? ''));
+        $smtpHost = trim((string) ($input['smtp_host'] ?? ''));
+        $smtpPort = trim((string) ($input['smtp_port'] ?? '587'));
+        $smtpEncryption = trim((string) ($input['smtp_encryption'] ?? 'tls'));
+        $smtpUsername = trim((string) ($input['smtp_username'] ?? ''));
+        $smtpPassword = trim((string) ($input['smtp_password'] ?? ''));
         $mailFrom = trim((string) ($input['mail_from'] ?? ''));
 
         $mailFromName = trim((string) ($input['mail_from_name'] ?? ''));
@@ -109,6 +131,11 @@ final class InstallController
             "APP_URL='" . $appUrl . "'",
             '',
             "MAILER_DSN='" . $mailerDsn . "'",
+            "SMTP_HOST='" . $smtpHost . "'",
+            "SMTP_PORT='" . $smtpPort . "'",
+            "SMTP_ENCRYPTION='" . $smtpEncryption . "'",
+            "SMTP_USERNAME='" . $smtpUsername . "'",
+            "SMTP_PASSWORD='" . $smtpPassword . "'",
             "MAIL_FROM='" . $mailFrom . "'",
             "MAIL_FROM_NAME='" . $mailFromName . "'",
             '',

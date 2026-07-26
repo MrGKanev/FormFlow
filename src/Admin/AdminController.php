@@ -26,7 +26,10 @@ final class AdminController
         private readonly FormApiKeyRepositoryInterface $apiKeys,
         private readonly array $forms,
         private readonly FormConfigRepositoryInterface $formRepository,
-        private readonly bool $devLoginEnabled = false
+        private readonly bool $devLoginEnabled = false,
+        private readonly ?string $envPath = null,
+        private readonly ?string $adminConfigPath = null,
+        private readonly ?string $securityConfigPath = null
     ) {
     }
 
@@ -78,6 +81,10 @@ final class AdminController
 
         if ($path === 'admin/forms') {
             return $this->handleForms();
+        }
+
+        if ($path === 'admin/settings') {
+            return $this->handleSettings();
         }
 
         return $this->htmlResponse(404, '<h1>Not found</h1>');
@@ -292,6 +299,384 @@ final class AdminController
             'csrfToken' => $_SESSION['csrf_token'],
             'values' => $values,
         ], 'Forms');
+    }
+
+    private function handleSettings(): array
+    {
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            if (!$this->verifyCsrfToken()) {
+                return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
+            }
+
+            try {
+                $settings = $this->settingsFromPost($_POST);
+                $this->writeSettings($settings);
+            } catch (InvalidArgumentException $exception) {
+                return $this->htmlResponse(422, $this->renderSettings($exception->getMessage(), $_POST, false));
+            }
+
+            return ['status' => 302, 'body' => '', 'redirect' => '/admin/settings?saved=1'];
+        }
+
+        return $this->htmlResponse(200, $this->renderSettings(null, [], ($_GET['saved'] ?? null) === '1'));
+    }
+
+    private function renderSettings(?string $error, array $values, bool $saved): string
+    {
+        return $this->render('settings', [
+            'error' => $error,
+            'saved' => $saved,
+            'settings' => $values !== [] ? $values : $this->currentSettings(),
+            'csrfToken' => $_SESSION['csrf_token'],
+        ], 'Settings');
+    }
+
+    /** @return array<string, mixed> */
+    private function currentSettings(): array
+    {
+        $env = $this->readEnvFile();
+        $securityConfig = $this->securityConfig();
+
+        return array_merge([
+            'app_env' => $env['APP_ENV'] ?? (getenv('APP_ENV') ?: 'production'),
+            'app_url' => $env['APP_URL'] ?? (getenv('APP_URL') ?: ''),
+            'mailer_dsn' => $env['MAILER_DSN'] ?? (getenv('MAILER_DSN') ?: ''),
+            'smtp_host' => $env['SMTP_HOST'] ?? (getenv('SMTP_HOST') ?: ''),
+            'smtp_port' => $env['SMTP_PORT'] ?? (getenv('SMTP_PORT') ?: '587'),
+            'smtp_encryption' => $env['SMTP_ENCRYPTION'] ?? (getenv('SMTP_ENCRYPTION') ?: 'tls'),
+            'smtp_username' => $env['SMTP_USERNAME'] ?? (getenv('SMTP_USERNAME') ?: ''),
+            'smtp_password' => $env['SMTP_PASSWORD'] ?? (getenv('SMTP_PASSWORD') ?: ''),
+            'mail_from' => $env['MAIL_FROM'] ?? (getenv('MAIL_FROM') ?: ''),
+            'mail_from_name' => $env['MAIL_FROM_NAME'] ?? (getenv('MAIL_FROM_NAME') ?: 'formflow'),
+            'turnstile_secret' => $env['TURNSTILE_SECRET'] ?? (getenv('TURNSTILE_SECRET') ?: ''),
+            'database_path' => $env['DATABASE_PATH'] ?? (getenv('DATABASE_PATH') ?: 'storage/submissions.sqlite'),
+            'ip_hash_secret' => $env['IP_HASH_SECRET'] ?? (getenv('IP_HASH_SECRET') ?: ''),
+            'admin_username' => $env['ADMIN_USERNAME'] ?? (getenv('ADMIN_USERNAME') ?: 'admin'),
+            'login_rate_limit_max' => (string) 5,
+            'login_rate_limit_window' => (string) 15,
+            'blocked_ips' => implode(PHP_EOL, $securityConfig['blocked_ips'] ?? []),
+        ], $this->adminRateLimitSettings());
+    }
+
+    /** @param array<string, mixed> $input @return array<string, mixed> */
+    private function settingsFromPost(array $input): array
+    {
+        $appEnv = (string) ($input['app_env'] ?? 'production');
+
+        if (!in_array($appEnv, ['production', 'local', 'development', 'testing'], true)) {
+            throw new InvalidArgumentException('APP_ENV must be production, local, development, or testing.');
+        }
+
+        $rawFields = [
+            'app_url',
+            'mailer_dsn',
+            'smtp_host',
+            'smtp_port',
+            'smtp_encryption',
+            'smtp_username',
+            'smtp_password',
+            'mail_from',
+            'mail_from_name',
+            'turnstile_secret',
+            'database_path',
+            'ip_hash_secret',
+            'admin_username',
+        ];
+
+        foreach ($rawFields as $field) {
+            $this->assertSafeEnvValue($field, (string) ($input[$field] ?? ''));
+        }
+
+        $appUrl = trim((string) ($input['app_url'] ?? ''));
+
+        if ($appUrl !== '' && !$this->isHttpUrl($appUrl)) {
+            throw new InvalidArgumentException('App URL must be a valid http or https URL.');
+        }
+
+        $mailFrom = trim((string) ($input['mail_from'] ?? ''));
+
+        if ($mailFrom !== '' && !filter_var($mailFrom, FILTER_VALIDATE_EMAIL)) {
+            throw new InvalidArgumentException('From address must be a valid email address.');
+        }
+
+        $smtpPortInput = trim((string) ($input['smtp_port'] ?? '587'));
+
+        if ($smtpPortInput === '' || !ctype_digit($smtpPortInput) || (int) $smtpPortInput < 1 || (int) $smtpPortInput > 65535) {
+            throw new InvalidArgumentException('SMTP port must be between 1 and 65535.');
+        }
+
+        $smtpPort = (int) $smtpPortInput;
+
+        $smtpEncryption = strtolower(trim((string) ($input['smtp_encryption'] ?? 'tls')));
+
+        if (!in_array($smtpEncryption, ['tls', 'ssl', 'none'], true)) {
+            throw new InvalidArgumentException('SMTP encryption must be TLS, SSL, or None.');
+        }
+
+        $databasePath = trim((string) ($input['database_path'] ?? ''));
+
+        if ($databasePath === '') {
+            throw new InvalidArgumentException('Database path is required.');
+        }
+
+        $ipHashSecret = trim((string) ($input['ip_hash_secret'] ?? ''));
+
+        if (strlen($ipHashSecret) < 16) {
+            throw new InvalidArgumentException('IP hash secret must be at least 16 characters.');
+        }
+
+        $adminUsername = trim((string) ($input['admin_username'] ?? ''));
+
+        if ($adminUsername === '') {
+            throw new InvalidArgumentException('Admin username is required.');
+        }
+
+        $newPassword = (string) ($input['admin_password'] ?? '');
+
+        if ($newPassword !== '' && strlen($newPassword) < 8) {
+            throw new InvalidArgumentException('New admin password must be at least 8 characters.');
+        }
+
+        $loginMax = max(1, (int) ($input['login_rate_limit_max'] ?? 5));
+        $loginWindow = max(1, (int) ($input['login_rate_limit_window'] ?? 15));
+        $blockedIps = $this->validatedIpEntries((string) ($input['blocked_ips'] ?? ''));
+
+        return [
+            'env' => [
+                'APP_ENV' => $appEnv,
+                'APP_URL' => $appUrl,
+                'MAILER_DSN' => trim((string) ($input['mailer_dsn'] ?? '')),
+                'SMTP_HOST' => trim((string) ($input['smtp_host'] ?? '')),
+                'SMTP_PORT' => (string) $smtpPort,
+                'SMTP_ENCRYPTION' => $smtpEncryption,
+                'SMTP_USERNAME' => trim((string) ($input['smtp_username'] ?? '')),
+                'SMTP_PASSWORD' => trim((string) ($input['smtp_password'] ?? '')),
+                'MAIL_FROM' => $mailFrom,
+                'MAIL_FROM_NAME' => trim((string) ($input['mail_from_name'] ?? '')),
+                'TURNSTILE_SECRET' => trim((string) ($input['turnstile_secret'] ?? '')),
+                'DATABASE_PATH' => $databasePath,
+                'IP_HASH_SECRET' => $ipHashSecret,
+                'ADMIN_USERNAME' => $adminUsername,
+            ],
+            'new_admin_password' => $newPassword,
+            'login_rate_limit' => [
+                'max' => $loginMax,
+                'window_minutes' => $loginWindow,
+            ],
+            'blocked_ips' => $blockedIps,
+        ];
+    }
+
+    /** @param array<string, mixed> $settings */
+    private function writeSettings(array $settings): void
+    {
+        $envUpdates = $settings['env'];
+
+        if ($settings['new_admin_password'] !== '') {
+            $envUpdates['ADMIN_PASSWORD_HASH'] = password_hash((string) $settings['new_admin_password'], PASSWORD_DEFAULT);
+        }
+
+        $this->writeEnvFile($envUpdates);
+        $this->writeAdminConfig($settings['login_rate_limit']);
+        $this->writeSecurityConfig($settings['blocked_ips']);
+    }
+
+    private function assertSafeEnvValue(string $field, string $value): void
+    {
+        if (str_contains($value, "'") || str_contains($value, "\n") || str_contains($value, "\r")) {
+            throw new InvalidArgumentException("\"{$field}\" cannot contain a single-quote or a line break.");
+        }
+    }
+
+    /** @return list<string> */
+    private function validatedIpEntries(string $value): array
+    {
+        $entries = $this->lines($value);
+
+        foreach ($entries as $entry) {
+            if (str_contains($entry, '/')) {
+                [$subnet, $prefix] = explode('/', $entry, 2);
+
+                if (
+                    filter_var($subnet, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false
+                    || !ctype_digit($prefix)
+                    || (int) $prefix > 32
+                ) {
+                    throw new InvalidArgumentException('Blocked IP entries must be exact IPs or IPv4 CIDR ranges.');
+                }
+
+                continue;
+            }
+
+            if (filter_var($entry, FILTER_VALIDATE_IP) === false) {
+                throw new InvalidArgumentException('Blocked IP entries must be exact IPs or IPv4 CIDR ranges.');
+            }
+        }
+
+        return $entries;
+    }
+
+    /** @return array<string, string> */
+    private function readEnvFile(): array
+    {
+        if ($this->envPath === null || !is_file($this->envPath)) {
+            return [];
+        }
+
+        $lines = file($this->envPath, FILE_IGNORE_NEW_LINES);
+        $values = [];
+
+        foreach ($lines === false ? [] : $lines as $line) {
+            if (preg_match('/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/', $line, $matches) !== 1) {
+                continue;
+            }
+
+            $value = trim($matches[2]);
+
+            if (
+                strlen($value) >= 2
+                && (($value[0] === "'" && substr($value, -1) === "'") || ($value[0] === '"' && substr($value, -1) === '"'))
+            ) {
+                $value = substr($value, 1, -1);
+            }
+
+            $values[$matches[1]] = $value;
+        }
+
+        return $values;
+    }
+
+    /** @param array<string, string> $updates */
+    private function writeEnvFile(array $updates): void
+    {
+        if ($this->envPath === null) {
+            return;
+        }
+
+        $lines = is_file($this->envPath) ? file($this->envPath, FILE_IGNORE_NEW_LINES) : [];
+        $lines = $lines === false ? [] : $lines;
+        $written = [];
+
+        foreach ($lines as $index => $line) {
+            if (preg_match('/^\s*([A-Z0-9_]+)\s*=/', $line, $matches) !== 1) {
+                continue;
+            }
+
+            $key = $matches[1];
+
+            if (array_key_exists($key, $updates)) {
+                $lines[$index] = $this->envLine($key, (string) $updates[$key]);
+                $written[] = $key;
+            }
+        }
+
+        foreach ($updates as $key => $value) {
+            if (!in_array($key, $written, true)) {
+                $lines[] = $this->envLine($key, (string) $value);
+            }
+        }
+
+        file_put_contents($this->envPath, implode(PHP_EOL, $lines) . PHP_EOL);
+    }
+
+    private function envLine(string $key, string $value): string
+    {
+        return $key . "='" . $value . "'";
+    }
+
+    /** @return array<string, mixed> */
+    private function adminConfig(): array
+    {
+        if ($this->adminConfigPath === null || !is_file($this->adminConfigPath)) {
+            return ['allowed_ips' => $this->configuredIps, 'login_rate_limit' => ['max' => 5, 'window_minutes' => 15]];
+        }
+
+        $config = require $this->adminConfigPath;
+
+        return is_array($config) ? $config : [];
+    }
+
+    /** @return array<string, string> */
+    private function adminRateLimitSettings(): array
+    {
+        $config = $this->adminConfig();
+        $loginRateLimit = $config['login_rate_limit'] ?? [];
+
+        return [
+            'login_rate_limit_max' => (string) (int) ($loginRateLimit['max'] ?? 5),
+            'login_rate_limit_window' => (string) (int) ($loginRateLimit['window_minutes'] ?? 15),
+        ];
+    }
+
+    /** @param array{max: int, window_minutes: int} $loginRateLimit */
+    private function writeAdminConfig(array $loginRateLimit): void
+    {
+        if ($this->adminConfigPath === null) {
+            return;
+        }
+
+        $config = $this->adminConfig();
+        $allowedIps = $config['allowed_ips'] ?? $this->configuredIps;
+
+        $content = "<?php\n\n";
+        $content .= "declare(strict_types=1);\n\n";
+        $content .= "return [\n";
+        $content .= "    'allowed_ips' => [\n";
+
+        foreach ($allowedIps as $ip) {
+            $content .= "        '" . addslashes((string) $ip) . "',\n";
+        }
+
+        $content .= "    ],\n\n";
+        $content .= "    'login_rate_limit' => [\n";
+        $content .= "        'max' => " . (int) $loginRateLimit['max'] . ",\n";
+        $content .= "        'window_minutes' => " . (int) $loginRateLimit['window_minutes'] . ",\n";
+        $content .= "    ],\n";
+        $content .= "];\n";
+
+        file_put_contents($this->adminConfigPath, $content);
+
+        if (function_exists('opcache_invalidate')) {
+            opcache_invalidate($this->adminConfigPath, true);
+        }
+    }
+
+    /** @return array<string, mixed> */
+    private function securityConfig(): array
+    {
+        if ($this->securityConfigPath === null || !is_file($this->securityConfigPath)) {
+            return ['blocked_ips' => []];
+        }
+
+        $config = require $this->securityConfigPath;
+
+        return is_array($config) ? $config : [];
+    }
+
+    /** @param list<string> $blockedIps */
+    private function writeSecurityConfig(array $blockedIps): void
+    {
+        if ($this->securityConfigPath === null) {
+            return;
+        }
+
+        $content = "<?php\n\n";
+        $content .= "declare(strict_types=1);\n\n";
+        $content .= "return [\n";
+        $content .= "    'blocked_ips' => [\n";
+
+        foreach ($blockedIps as $ip) {
+            $content .= "        '" . addslashes($ip) . "',\n";
+        }
+
+        $content .= "    ],\n";
+        $content .= "];\n";
+
+        file_put_contents($this->securityConfigPath, $content);
+
+        if (function_exists('opcache_invalidate')) {
+            opcache_invalidate($this->securityConfigPath, true);
+        }
     }
 
     /**

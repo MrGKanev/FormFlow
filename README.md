@@ -20,7 +20,7 @@ Alternatively, skip the wizard and configure by hand:
 cp .env.example .env
 ```
 
-Edit `.env` with real SMTP/Turnstile data. You can keep starter forms in `config/forms.php` or create new forms from `/admin/forms`.
+Edit `.env` with real SMTP/Turnstile data, or use `/admin/settings` after install. You can keep starter forms in `config/forms.php` or create new forms from `/admin/forms`.
 
 ## Running locally
 
@@ -30,10 +30,18 @@ php -S localhost:8080 -t public
 
 `GET /` returns a short static home page with a description of the project and links to `/admin` and `/health`.
 
-Health check:
+Health check page:
 
 ```bash
-curl http://localhost:8080/health
+open http://localhost:8080/health
+```
+
+Machine-readable health output:
+
+```bash
+curl -H "Accept: application/json" http://localhost:8080/health
+# or
+curl http://localhost:8080/health?format=json
 ```
 
 Test submission (the `contact` form from `config/forms.php`):
@@ -64,6 +72,7 @@ Routes:
 - `/admin/submissions/{id}` - details for a specific submission.
 - `/admin/whitelist` - management of the IP whitelist for the admin panel (adding/removing IP/CIDR entries).
 - `/admin/api-keys` - generate/regenerate an API key per form.
+- `/admin/settings` - edit runtime, SMTP delivery, storage, login-rate-limit, admin-account, and global blocklist settings.
 
 Requires:
 
@@ -81,7 +90,9 @@ vendor/bin/phpunit
 
 - Forms can be created from `/admin/forms`. Starter/static forms can also live in `config/forms.php`.
 - Per form: recipient, `allowed_origins`, `subject`, `success_redirect`, `turnstile`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`. Form endpoints accept all submitted user fields; system fields such as `_key`, `_website`, `cf-turnstile-response`, and `csrf_token` are not stored or emailed. API keys are generated from `/admin/api-keys`.
-- `config/security.php` - global IP blocklist (exact IPv4 addresses or CIDR ranges).
+- Global app settings can be edited from `/admin/settings`. It writes selected values to `.env`, login-rate-limit values to `config/admin.php`, and the global IP blocklist to `config/security.php`.
+- Mail can be configured with standard SMTP fields: `SMTP_HOST`, `SMTP_PORT`, `SMTP_ENCRYPTION` (`tls`, `ssl`, or `none`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM`, and `MAIL_FROM_NAME`. `MAILER_DSN` is still supported as an advanced override; when set, it takes precedence over the individual SMTP fields.
+- `config/security.php` - global IP blocklist (exact IP addresses or IPv4 CIDR ranges).
 
 ## Protections
 

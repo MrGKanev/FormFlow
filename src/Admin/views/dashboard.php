@@ -79,20 +79,22 @@ $pageUrl = static function (int $targetPage) use ($formId, $status): string {
 <div class="table-wrap">
     <table>
         <thead>
-            <tr><th>ID</th><th>Form</th><th>Status</th><th>Created</th></tr>
+            <tr><th>ID</th><th>Form</th><th>Status</th><th>Created</th><th>Action</th></tr>
         </thead>
         <tbody>
             <?php foreach ($submissions as $submission): ?>
                 <?php $submissionStatus = (string) $submission['status']; ?>
+                <?php $detailUrl = '/admin/submissions/' . (int) $submission['id']; ?>
                 <tr>
-                    <td><a class="row-link" href="/admin/submissions/<?= (int) $submission['id'] ?>">#<?= (int) $submission['id'] ?></a></td>
+                    <td><a class="row-link" href="<?= $detailUrl ?>">#<?= (int) $submission['id'] ?></a></td>
                     <td><?= htmlspecialchars((string) $submission['form_id'], ENT_QUOTES, 'UTF-8') ?></td>
                     <td><span class="status-pill <?= htmlspecialchars($statusClass($submissionStatus), ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($submissionStatus, ENT_QUOTES, 'UTF-8') ?></span></td>
                     <td><time datetime="<?= htmlspecialchars((string) $submission['created_at'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $submission['created_at'], ENT_QUOTES, 'UTF-8') ?></time></td>
+                    <td class="actions"><a class="button secondary compact" href="<?= $detailUrl ?>">Open</a></td>
                 </tr>
             <?php endforeach; ?>
             <?php if ($submissions === []): ?>
-                <tr><td colspan="4" class="empty-state">No submissions match the current filters.</td></tr>
+                <tr><td colspan="5" class="empty-state">No submissions match the current filters.</td></tr>
             <?php endif; ?>
         </tbody>
     </table>

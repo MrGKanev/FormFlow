@@ -57,7 +57,12 @@ final class InstallControllerTest extends TestCase
     {
         return [
             'app_url' => 'https://forms.example.com',
-            'mailer_dsn' => 'smtp://user:pass@smtp.example.com:587',
+            'mailer_dsn' => '',
+            'smtp_host' => 'smtp.example.com',
+            'smtp_port' => '587',
+            'smtp_encryption' => 'tls',
+            'smtp_username' => 'user',
+            'smtp_password' => 'pass',
             'mail_from' => 'forms@example.com',
             'mail_from_name' => 'Example Forms',
             'turnstile_secret' => 'turnstile-secret',
@@ -171,6 +176,9 @@ final class InstallControllerTest extends TestCase
         $env = file_get_contents($this->envPath);
         $this->assertStringContainsString("APP_URL=''", $env);
         $this->assertStringContainsString("MAILER_DSN=''", $env);
+        $this->assertStringContainsString("SMTP_HOST=''", $env);
+        $this->assertStringContainsString("SMTP_PORT='587'", $env);
+        $this->assertStringContainsString("SMTP_ENCRYPTION='tls'", $env);
         $this->assertStringContainsString("MAIL_FROM=''", $env);
         $this->assertStringContainsString("TURNSTILE_SECRET=''", $env);
         $this->assertStringContainsString("MAIL_FROM_NAME='formflow'", $env);
@@ -229,7 +237,12 @@ final class InstallControllerTest extends TestCase
 
         $env = file_get_contents($this->envPath);
         $this->assertStringContainsString("APP_URL='https://forms.example.com'", $env);
-        $this->assertStringContainsString("MAILER_DSN='smtp://user:pass@smtp.example.com:587'", $env);
+        $this->assertStringContainsString("MAILER_DSN=''", $env);
+        $this->assertStringContainsString("SMTP_HOST='smtp.example.com'", $env);
+        $this->assertStringContainsString("SMTP_PORT='587'", $env);
+        $this->assertStringContainsString("SMTP_ENCRYPTION='tls'", $env);
+        $this->assertStringContainsString("SMTP_USERNAME='user'", $env);
+        $this->assertStringContainsString("SMTP_PASSWORD='pass'", $env);
         $this->assertStringContainsString("ADMIN_USERNAME='admin'", $env);
         $this->assertMatchesRegularExpression("/ADMIN_PASSWORD_HASH='\\\$2y\\\$/", $env);
 

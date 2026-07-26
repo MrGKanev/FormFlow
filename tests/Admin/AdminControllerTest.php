@@ -49,7 +49,10 @@ final class AdminControllerTest extends TestCase
         ?FormApiKeyRepositoryInterface $apiKeys = null,
         ?array $forms = null,
         ?SqliteFormRepository $formRepository = null,
-        bool $devLoginEnabled = false
+        bool $devLoginEnabled = false,
+        ?string $envPath = null,
+        ?string $adminConfigPath = null,
+        ?string $securityConfigPath = null
     ): AdminController {
         $whitelistRepository ??= new SqliteAdminWhitelistRepository(':memory:');
         $forms ??= [
@@ -73,8 +76,64 @@ final class AdminControllerTest extends TestCase
             $apiKeys ?? new SqliteFormApiKeyRepository(':memory:'),
             $forms,
             $formRepository ?? new SqliteFormRepository(':memory:'),
-            $devLoginEnabled
+            $devLoginEnabled,
+            $envPath,
+            $adminConfigPath,
+            $securityConfigPath
         );
+    }
+
+    /** @return array{dir: string, env: string, admin: string, security: string} */
+    private function settingsFiles(): array
+    {
+        $dir = sys_get_temp_dir() . '/formflow-admin-settings-' . bin2hex(random_bytes(6));
+        mkdir($dir);
+
+        $envPath = $dir . '/.env';
+        $adminConfigPath = $dir . '/admin.php';
+        $securityConfigPath = $dir . '/security.php';
+
+        file_put_contents($envPath, implode(PHP_EOL, [
+            "APP_ENV='production'",
+            "APP_URL='https://forms.example.com'",
+            "MAILER_DSN=''",
+            "SMTP_HOST='smtp.example.com'",
+            "SMTP_PORT='587'",
+            "SMTP_ENCRYPTION='tls'",
+            "SMTP_USERNAME='user'",
+            "SMTP_PASSWORD='pass'",
+            "MAIL_FROM='forms@example.com'",
+            "MAIL_FROM_NAME='formflow'",
+            "TURNSTILE_SECRET='turnstile-secret'",
+            "DATABASE_PATH='storage/submissions.sqlite'",
+            "IP_HASH_SECRET='1234567890123456'",
+            "ADMIN_USERNAME='admin'",
+            "ADMIN_PASSWORD_HASH='" . password_hash(self::PASSWORD, PASSWORD_DEFAULT) . "'",
+            '',
+        ]));
+
+        file_put_contents($adminConfigPath, "<?php\n\ndeclare(strict_types=1);\n\nreturn ['allowed_ips' => ['203.0.113.10'], 'login_rate_limit' => ['max' => 5, 'window_minutes' => 15]];\n");
+        file_put_contents($securityConfigPath, "<?php\n\ndeclare(strict_types=1);\n\nreturn ['blocked_ips' => ['203.0.113.5']];\n");
+
+        return [
+            'dir' => $dir,
+            'env' => $envPath,
+            'admin' => $adminConfigPath,
+            'security' => $securityConfigPath,
+        ];
+    }
+
+    private function removeSettingsFiles(array $files): void
+    {
+        foreach (['env', 'admin', 'security'] as $key) {
+            if (isset($files[$key]) && is_file($files[$key])) {
+                unlink($files[$key]);
+            }
+        }
+
+        if (isset($files['dir']) && is_dir($files['dir'])) {
+            rmdir($files['dir']);
+        }
     }
 
     private function csrfToken(): string
@@ -306,6 +365,8 @@ final class AdminControllerTest extends TestCase
 
         $this->assertSame(200, $result['status']);
         $this->assertStringContainsString('contact', $result['body']);
+        $this->assertStringContainsString('href="/admin/submissions/1"', $result['body']);
+        $this->assertStringContainsString('Open</a>', $result['body']);
     }
 
     public function testSubmissionDetailReturns404ForUnknownId(): void
@@ -565,5 +626,141 @@ final class AdminControllerTest extends TestCase
 
         $this->assertSame(419, $result['status']);
         $this->assertSame([], $formRepository->all());
+    }
+
+    public function testSettingsPageRendersCurrentSettings(): void
+    {
+        $files = $this->settingsFiles();
+
+        try {
+            $controller = $this->makeController(
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+            $this->login($controller);
+
+            $result = $controller->handle('admin/settings');
+
+            $this->assertSame(200, $result['status']);
+            $this->assertStringContainsString('Runtime configuration', $result['body']);
+            $this->assertStringContainsString('https://forms.example.com', $result['body']);
+            $this->assertStringContainsString('203.0.113.5', $result['body']);
+        } finally {
+            $this->removeSettingsFiles($files);
+        }
+    }
+
+    public function testSettingsPostUpdatesEnvAdminAndSecurityFiles(): void
+    {
+        $files = $this->settingsFiles();
+
+        try {
+            $controller = $this->makeController(
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+            $this->login($controller);
+
+            $controller->handle('admin/settings');
+            $token = $this->csrfToken();
+
+            $_SERVER['REQUEST_METHOD'] = 'POST';
+            $_POST = [
+                'app_env' => 'local',
+                'app_url' => 'https://forms.test',
+                'mailer_dsn' => '',
+                'smtp_host' => 'smtp.mail.test',
+                'smtp_port' => '465',
+                'smtp_encryption' => 'ssl',
+                'smtp_username' => 'new-user',
+                'smtp_password' => 'new-pass',
+                'mail_from' => 'new@example.com',
+                'mail_from_name' => 'New Formflow',
+                'turnstile_secret' => 'new-turnstile',
+                'database_path' => 'storage/new.sqlite',
+                'ip_hash_secret' => 'abcdef1234567890',
+                'admin_username' => 'owner',
+                'admin_password' => 'new-password',
+                'login_rate_limit_max' => '9',
+                'login_rate_limit_window' => '30',
+                'blocked_ips' => "198.51.100.5\n198.51.100.0/24",
+                'csrf_token' => $token,
+            ];
+
+            $result = $controller->handle('admin/settings');
+
+            $this->assertSame(302, $result['status']);
+            $this->assertSame('/admin/settings?saved=1', $result['redirect']);
+
+            $env = file_get_contents($files['env']);
+            $this->assertStringContainsString("APP_ENV='local'", (string) $env);
+            $this->assertStringContainsString("APP_URL='https://forms.test'", (string) $env);
+            $this->assertStringContainsString("SMTP_HOST='smtp.mail.test'", (string) $env);
+            $this->assertStringContainsString("SMTP_PORT='465'", (string) $env);
+            $this->assertStringContainsString("SMTP_ENCRYPTION='ssl'", (string) $env);
+            $this->assertStringContainsString("SMTP_USERNAME='new-user'", (string) $env);
+            $this->assertStringContainsString("SMTP_PASSWORD='new-pass'", (string) $env);
+            $this->assertStringContainsString("ADMIN_USERNAME='owner'", (string) $env);
+            $this->assertMatchesRegularExpression("/ADMIN_PASSWORD_HASH='\\\$2y\\\$/", (string) $env);
+
+            $adminConfig = require $files['admin'];
+            $this->assertSame(['203.0.113.10'], $adminConfig['allowed_ips']);
+            $this->assertSame(9, $adminConfig['login_rate_limit']['max']);
+            $this->assertSame(30, $adminConfig['login_rate_limit']['window_minutes']);
+
+            $securityConfig = require $files['security'];
+            $this->assertSame(['198.51.100.5', '198.51.100.0/24'], $securityConfig['blocked_ips']);
+        } finally {
+            $this->removeSettingsFiles($files);
+        }
+    }
+
+    public function testSettingsPostRejectsInvalidBlockedIp(): void
+    {
+        $files = $this->settingsFiles();
+
+        try {
+            $controller = $this->makeController(
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+            $this->login($controller);
+
+            $controller->handle('admin/settings');
+            $token = $this->csrfToken();
+
+            $_SERVER['REQUEST_METHOD'] = 'POST';
+            $_POST = [
+                'app_env' => 'production',
+                'app_url' => 'https://forms.example.com',
+                'mailer_dsn' => '',
+                'smtp_host' => '',
+                'smtp_port' => '587',
+                'smtp_encryption' => 'tls',
+                'smtp_username' => '',
+                'smtp_password' => '',
+                'mail_from' => '',
+                'mail_from_name' => 'formflow',
+                'turnstile_secret' => '',
+                'database_path' => 'storage/submissions.sqlite',
+                'ip_hash_secret' => '1234567890123456',
+                'admin_username' => 'admin',
+                'login_rate_limit_max' => '5',
+                'login_rate_limit_window' => '15',
+                'blocked_ips' => 'not-an-ip',
+                'csrf_token' => $token,
+            ];
+
+            $result = $controller->handle('admin/settings');
+
+            $this->assertSame(422, $result['status']);
+            $securityConfig = require $files['security'];
+            $this->assertSame(['203.0.113.5'], $securityConfig['blocked_ips']);
+        } finally {
+            $this->removeSettingsFiles($files);
+        }
     }
 }
