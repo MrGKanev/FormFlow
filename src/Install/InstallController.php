@@ -140,6 +140,9 @@ final class InstallController
             "MAIL_FROM_NAME='" . $mailFromName . "'",
             '',
             "TURNSTILE_SECRET='" . $turnstileSecret . "'",
+            "TURNSTILE_SITE_KEY=''",
+            "DISCORD_WEBHOOK_URL=''",
+            "SLACK_WEBHOOK_URL=''",
             '',
             "DATABASE_PATH='storage/submissions.sqlite'",
             "IP_HASH_SECRET='" . $ipHashSecret . "'",
@@ -147,6 +150,8 @@ final class InstallController
             '',
             "ADMIN_USERNAME='" . $input['admin_username'] . "'",
             "ADMIN_PASSWORD_HASH='" . $passwordHash . "'",
+            "ADMIN_TOTP_SECRET=''",
+            "RECOVERY_TOKEN_HASH=''",
             '',
         ];
 

@@ -28,13 +28,39 @@ interface SubmissionRepositoryInterface
     public function find(int $submissionId): ?array;
 
     /** @return list<array<string, mixed>> */
-    public function findPaginated(?string $formId, ?string $status, int $page, int $perPage): array;
+    public function findPaginated(
+        ?string $formId,
+        ?string $status,
+        int $page,
+        int $perPage,
+        ?string $search = null,
+        ?string $dateFrom = null,
+        ?string $dateTo = null
+    ): array;
 
     /** @return list<array<string, mixed>> */
-    public function findForExport(?string $formId, ?string $status): array;
+    public function findForExport(
+        ?string $formId,
+        ?string $status,
+        ?string $search = null,
+        ?string $dateFrom = null,
+        ?string $dateTo = null
+    ): array;
+
+    /** @param list<int> $ids @return list<array<string, mixed>> */
+    public function findByIds(array $ids): array;
 
     /** @return list<array<string, mixed>> */
     public function deliveryLog(int $limit = 100): array;
 
-    public function count(?string $formId, ?string $status): int;
+    /** @return list<array<string, mixed>> */
+    public function analytics(): array;
+
+    public function count(
+        ?string $formId,
+        ?string $status,
+        ?string $search = null,
+        ?string $dateFrom = null,
+        ?string $dateTo = null
+    ): int;
 }

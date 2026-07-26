@@ -13,6 +13,7 @@ use formflow\FormApiKeyRepositoryInterface;
 use formflow\FormConfigRepositoryInterface;
 use formflow\MailSenderInterface;
 use formflow\SubmissionRepositoryInterface;
+use formflow\Totp;
 use InvalidArgumentException;
 use Throwable;
 
@@ -66,6 +67,10 @@ final class AdminController
             return $this->handleLogin();
         }
 
+        if ($path === 'admin/recovery') {
+            return $this->handleRecovery();
+        }
+
         if (!$this->auth->isLoggedIn()) {
             return ['status' => 302, 'body' => '', 'redirect' => '/admin/login'];
         }
@@ -76,6 +81,10 @@ final class AdminController
 
         if ($path === 'admin/export') {
             return $this->handleExport();
+        }
+
+        if ($path === 'admin/submissions/bulk') {
+            return $this->handleSubmissionBulkAction();
         }
 
         if (preg_match('#^admin/submissions/(\d+)$#', $path, $matches) === 1) {
@@ -126,6 +135,18 @@ final class AdminController
             return $this->handleAudit();
         }
 
+        if ($path === 'admin/backup') {
+            return $this->handleBackup();
+        }
+
+        if ($path === 'admin/config/export') {
+            return $this->handleConfigExport();
+        }
+
+        if ($path === 'admin/config/import') {
+            return $this->handleConfigImport();
+        }
+
         return $this->htmlResponse(404, '<h1>Not found</h1>');
     }
 
@@ -152,9 +173,10 @@ final class AdminController
 
         $username = (string) ($_POST['username'] ?? '');
         $password = (string) ($_POST['password'] ?? '');
+        $totpCode = isset($_POST['totp_code']) ? (string) $_POST['totp_code'] : null;
         $ipHash = $this->ipHash($this->clientIp());
 
-        $result = $this->auth->attemptLogin($username, $password, $ipHash);
+        $result = $this->auth->attemptLogin($username, $password, $ipHash, $totpCode);
 
         if ($result === 'locked') {
             return $this->htmlResponse(429, $this->renderLogin('Too many attempts. Try again later.'));
@@ -173,21 +195,23 @@ final class AdminController
 
     private function handleDashboard(): array
     {
-        $formId = isset($_GET['form_id']) && $_GET['form_id'] !== '' ? (string) $_GET['form_id'] : null;
-        $status = isset($_GET['status']) && $_GET['status'] !== '' ? (string) $_GET['status'] : null;
+        [$formId, $status, $search, $dateFrom, $dateTo, $perPage] = $this->submissionFilters($_GET);
         $page = max(1, (int) ($_GET['page'] ?? 1));
 
-        $submissions = $this->submissions->findPaginated($formId, $status, $page, self::PER_PAGE);
-        $total = $this->submissions->count($formId, $status);
+        $submissions = $this->submissions->findPaginated($formId, $status, $page, $perPage, $search, $dateFrom, $dateTo);
+        $total = $this->submissions->count($formId, $status, $search, $dateFrom, $dateTo);
 
         return $this->htmlResponse(200, $this->render('dashboard', [
             'submissions' => $submissions,
             'total' => $total,
             'page' => $page,
-            'perPage' => self::PER_PAGE,
+            'perPage' => $perPage,
             'formId' => $formId,
             'status' => $status,
-            'setupStatus' => $this->setupStatus(),
+            'search' => $search,
+            'dateFrom' => $dateFrom,
+            'dateTo' => $dateTo,
+            'analytics' => $this->submissions->analytics(),
         ], 'Submissions'));
     }
 
@@ -295,9 +319,65 @@ final class AdminController
 
     private function handleExport(): array
     {
-        $formId = isset($_GET['form_id']) && $_GET['form_id'] !== '' ? (string) $_GET['form_id'] : null;
-        $status = isset($_GET['status']) && $_GET['status'] !== '' ? (string) $_GET['status'] : null;
-        $rows = $this->submissions->findForExport($formId, $status);
+        [$formId, $status, $search, $dateFrom, $dateTo] = $this->submissionFilters($_GET);
+        $rows = $this->submissions->findForExport($formId, $status, $search, $dateFrom, $dateTo);
+        $this->recordAudit('submissions.export', 'Exported ' . count($rows) . ' submissions.');
+
+        return $this->csvResponse($rows);
+    }
+
+    private function handleSubmissionBulkAction(): array
+    {
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            return $this->htmlResponse(405, '<h1>Method not allowed</h1>');
+        }
+
+        if (!$this->verifyCsrfToken()) {
+            return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
+        }
+
+        $ids = $this->selectedSubmissionIds($_POST['submission_ids'] ?? []);
+        $action = (string) ($_POST['bulk_action'] ?? '');
+
+        if ($ids === []) {
+            return ['status' => 302, 'body' => '', 'redirect' => '/admin'];
+        }
+
+        if ($action === 'export') {
+            $rows = $this->submissions->findByIds($ids);
+            $this->recordAudit('submissions.bulk_export', 'Exported ' . count($rows) . ' selected submissions.');
+
+            return $this->csvResponse($rows, 'formflow-selected-submissions.csv');
+        }
+
+        foreach ($ids as $id) {
+            $submission = $this->submissions->find($id);
+
+            if ($submission === null) {
+                continue;
+            }
+
+            if ($action === 'review') {
+                $this->submissions->markReviewed($id);
+            }
+
+            if ($action === 'delete') {
+                $this->submissions->delete($id);
+            }
+
+            if ($action === 'resend' && (string) $submission['status'] === 'failed') {
+                $this->resendSubmission($submission);
+            }
+        }
+
+        $this->recordAudit('submissions.bulk_' . $action, 'Ran bulk action on ' . count($ids) . ' submissions.');
+
+        return ['status' => 302, 'body' => '', 'redirect' => '/admin'];
+    }
+
+    /** @param list<array<string, mixed>> $rows */
+    private function csvResponse(array $rows, string $filename = 'formflow-submissions.csv'): array
+    {
         $csv = fopen('php://temp', 'r+');
 
         if ($csv === false) {
@@ -322,7 +402,6 @@ final class AdminController
         rewind($csv);
         $body = stream_get_contents($csv);
         fclose($csv);
-        $this->recordAudit('submissions.export', 'Exported ' . count($rows) . ' submissions.');
 
         return [
             'status' => 200,
@@ -330,9 +409,20 @@ final class AdminController
             'redirect' => null,
             'headers' => [
                 'Content-Type' => 'text/csv; charset=utf-8',
-                'Content-Disposition' => 'attachment; filename="formflow-submissions.csv"',
+                'Content-Disposition' => 'attachment; filename="' . $filename . '"',
             ],
         ];
+    }
+
+    /** @param mixed $value @return list<int> */
+    private function selectedSubmissionIds(mixed $value): array
+    {
+        $ids = is_array($value) ? $value : [$value];
+
+        return array_values(array_unique(array_filter(
+            array_map(static fn (mixed $id): int => (int) $id, $ids),
+            static fn (int $id): bool => $id > 0
+        )));
     }
 
     private function handleDelivery(): array
@@ -530,6 +620,7 @@ final class AdminController
             'forms' => $this->forms,
             'dynamicFormIds' => array_keys($this->formRepository->all()),
             'apiKeys' => $this->apiKeys->all(),
+            'turnstileSiteKey' => (string) ($this->currentSettings()['turnstile_site_key'] ?? ''),
             'csrfToken' => $_SESSION['csrf_token'],
             'values' => $values,
         ], 'Forms');
@@ -571,6 +662,22 @@ final class AdminController
                 return $this->htmlResponse(200, $this->renderSettings(null, [], false, 'Deleted ' . $deleted . ' old submissions.'));
             }
 
+            if ($action === 'generate_recovery') {
+                $token = bin2hex(random_bytes(24));
+                $this->writeEnvFile(['RECOVERY_TOKEN_HASH' => password_hash($token, PASSWORD_DEFAULT)]);
+                $this->recordAudit('settings.recovery_token', 'Generated a recovery token.');
+
+                return $this->htmlResponse(200, $this->renderSettings(null, [], false, 'Recovery token: ' . $token));
+            }
+
+            if ($action === 'generate_totp') {
+                $secret = Totp::generateSecret();
+                $this->writeEnvFile(['ADMIN_TOTP_SECRET' => $secret]);
+                $this->recordAudit('settings.totp', 'Generated bootstrap TOTP secret.');
+
+                return $this->htmlResponse(200, $this->renderSettings(null, array_merge($_POST, ['admin_totp_secret' => $secret]), false, 'TOTP secret generated.'));
+            }
+
             if ($action === 'test_email') {
                 $message = $this->sendTestEmail((string) ($_POST['test_email_to'] ?? ''));
 
@@ -596,11 +703,20 @@ final class AdminController
 
     private function renderSettings(?string $error, array $values, bool $saved, ?string $notice = null): string
     {
+        $settings = $values !== [] ? array_merge($this->currentSettings(), $values) : $this->currentSettings();
+        $totpSecret = trim((string) ($settings['admin_totp_secret'] ?? ''));
+        $totpUri = $totpSecret !== ''
+            ? Totp::provisioningUri($totpSecret, (string) ($settings['admin_username'] ?? 'admin'))
+            : '';
+
         return $this->render('settings', [
             'error' => $error,
             'saved' => $saved,
             'notice' => $notice,
-            'settings' => $values !== [] ? array_merge($this->currentSettings(), $values) : $this->currentSettings(),
+            'settings' => $settings,
+            'totpQrSvg' => $totpUri !== '' ? Totp::qrSvg($totpUri) : null,
+            'totpProvisioningUri' => $totpUri,
+            'setupStatus' => $this->setupStatus(),
             'csrfToken' => $_SESSION['csrf_token'],
         ], 'Settings');
     }
@@ -623,9 +739,14 @@ final class AdminController
             'mail_from' => $env['MAIL_FROM'] ?? (getenv('MAIL_FROM') ?: ''),
             'mail_from_name' => $env['MAIL_FROM_NAME'] ?? (getenv('MAIL_FROM_NAME') ?: 'formflow'),
             'turnstile_secret' => $env['TURNSTILE_SECRET'] ?? (getenv('TURNSTILE_SECRET') ?: ''),
+            'turnstile_site_key' => $env['TURNSTILE_SITE_KEY'] ?? (getenv('TURNSTILE_SITE_KEY') ?: ''),
+            'discord_webhook_url' => $env['DISCORD_WEBHOOK_URL'] ?? (getenv('DISCORD_WEBHOOK_URL') ?: ''),
+            'slack_webhook_url' => $env['SLACK_WEBHOOK_URL'] ?? (getenv('SLACK_WEBHOOK_URL') ?: ''),
             'database_path' => $env['DATABASE_PATH'] ?? (getenv('DATABASE_PATH') ?: 'storage/submissions.sqlite'),
             'ip_hash_secret' => $env['IP_HASH_SECRET'] ?? (getenv('IP_HASH_SECRET') ?: ''),
             'retention_days' => $env['RETENTION_DAYS'] ?? (getenv('RETENTION_DAYS') ?: '180'),
+            'admin_totp_secret' => $env['ADMIN_TOTP_SECRET'] ?? (getenv('ADMIN_TOTP_SECRET') ?: ''),
+            'recovery_token_hash' => $env['RECOVERY_TOKEN_HASH'] ?? (getenv('RECOVERY_TOKEN_HASH') ?: ''),
             'admin_username' => $env['ADMIN_USERNAME'] ?? (getenv('ADMIN_USERNAME') ?: 'admin'),
             'login_rate_limit_max' => (string) 5,
             'login_rate_limit_window' => (string) 15,
@@ -653,9 +774,13 @@ final class AdminController
             'mail_from',
             'mail_from_name',
             'turnstile_secret',
+            'turnstile_site_key',
+            'discord_webhook_url',
+            'slack_webhook_url',
             'database_path',
             'ip_hash_secret',
             'retention_days',
+            'admin_totp_secret',
             'admin_username',
         ];
 
@@ -667,6 +792,14 @@ final class AdminController
 
         if ($appUrl !== '' && !$this->isHttpUrl($appUrl)) {
             throw new InvalidArgumentException('App URL must be a valid http or https URL.');
+        }
+
+        foreach (['discord_webhook_url', 'slack_webhook_url'] as $urlField) {
+            $url = trim((string) ($input[$urlField] ?? ''));
+
+            if ($url !== '' && !$this->isHttpUrl($url)) {
+                throw new InvalidArgumentException('Webhook URLs must be valid http or https URLs.');
+            }
         }
 
         $mailFrom = trim((string) ($input['mail_from'] ?? ''));
@@ -732,9 +865,13 @@ final class AdminController
                 'MAIL_FROM' => $mailFrom,
                 'MAIL_FROM_NAME' => trim((string) ($input['mail_from_name'] ?? '')),
                 'TURNSTILE_SECRET' => trim((string) ($input['turnstile_secret'] ?? '')),
+                'TURNSTILE_SITE_KEY' => trim((string) ($input['turnstile_site_key'] ?? '')),
+                'DISCORD_WEBHOOK_URL' => trim((string) ($input['discord_webhook_url'] ?? '')),
+                'SLACK_WEBHOOK_URL' => trim((string) ($input['slack_webhook_url'] ?? '')),
                 'DATABASE_PATH' => $databasePath,
                 'IP_HASH_SECRET' => $ipHashSecret,
                 'RETENTION_DAYS' => (string) $retentionDays,
+                'ADMIN_TOTP_SECRET' => trim((string) ($input['admin_totp_secret'] ?? '')),
                 'ADMIN_USERNAME' => $adminUsername,
             ],
             'new_admin_password' => $newPassword,
@@ -1001,6 +1138,7 @@ final class AdminController
                 if ($action === 'create') {
                     $username = trim((string) ($_POST['username'] ?? ''));
                     $password = (string) ($_POST['password'] ?? '');
+                    $totpSecret = trim((string) ($_POST['totp_secret'] ?? ''));
 
                     if (!preg_match('/^[A-Za-z0-9_.@-]{3,80}$/', $username)) {
                         throw new InvalidArgumentException('Username must be 3-80 characters: letters, numbers, dot, dash, underscore, or @.');
@@ -1010,7 +1148,7 @@ final class AdminController
                         throw new InvalidArgumentException('Password must be at least 8 characters.');
                     }
 
-                    $this->adminUsers->create($username, password_hash($password, PASSWORD_DEFAULT));
+                    $this->adminUsers->create($username, password_hash($password, PASSWORD_DEFAULT), $totpSecret !== '' ? $totpSecret : null);
                     $this->recordAudit('admin_user.create', 'Created admin user "' . $username . '".');
                 }
 
@@ -1046,6 +1184,129 @@ final class AdminController
         ], 'Audit log'));
     }
 
+    private function handleRecovery(): array
+    {
+        $token = (string) ($_GET['token'] ?? $_POST['token'] ?? '');
+        $settings = $this->currentSettings();
+        $hash = (string) ($settings['recovery_token_hash'] ?? '');
+
+        if ($token === '' || $hash === '' || !password_verify($token, $hash)) {
+            return $this->htmlResponse(403, '<h1>Invalid recovery token.</h1>');
+        }
+
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            if (!$this->verifyCsrfToken()) {
+                return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
+            }
+
+            $password = (string) ($_POST['password'] ?? '');
+
+            if (strlen($password) < 8) {
+                return $this->htmlResponse(422, $this->render('recovery', [
+                    'token' => $token,
+                    'error' => 'Password must be at least 8 characters.',
+                    'csrfToken' => $_SESSION['csrf_token'],
+                ], 'Recovery', withNav: false));
+            }
+
+            $this->writeEnvFile([
+                'ADMIN_PASSWORD_HASH' => password_hash($password, PASSWORD_DEFAULT),
+                'RECOVERY_TOKEN_HASH' => '',
+            ]);
+            $this->recordAudit('recovery.password_reset', 'Bootstrap password reset with recovery token.');
+
+            return ['status' => 302, 'body' => '', 'redirect' => '/admin/login'];
+        }
+
+        return $this->htmlResponse(200, $this->render('recovery', [
+            'token' => $token,
+            'error' => null,
+            'csrfToken' => $_SESSION['csrf_token'],
+        ], 'Recovery', withNav: false));
+    }
+
+    private function handleBackup(): array
+    {
+        $settings = $this->currentSettings();
+        $path = (string) ($settings['database_path'] ?? 'storage/submissions.sqlite');
+        $path = str_starts_with($path, '/') ? $path : dirname(__DIR__, 2) . '/' . ltrim($path, '/');
+
+        if (!is_file($path)) {
+            return $this->htmlResponse(404, '<h1>Database not found.</h1>');
+        }
+
+        $this->recordAudit('backup.download', 'Downloaded SQLite backup.');
+
+        return [
+            'status' => 200,
+            'body' => (string) file_get_contents($path),
+            'redirect' => null,
+            'headers' => [
+                'Content-Type' => 'application/octet-stream',
+                'Content-Disposition' => 'attachment; filename="formflow-submissions.sqlite"',
+            ],
+        ];
+    }
+
+    private function handleConfigExport(): array
+    {
+        $data = [
+            'settings' => $this->currentSettings(),
+            'forms' => $this->forms,
+            'security' => $this->securityConfig(),
+        ];
+        $this->recordAudit('config.export', 'Exported configuration.');
+
+        return [
+            'status' => 200,
+            'body' => json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
+            'redirect' => null,
+            'headers' => [
+                'Content-Type' => 'application/json; charset=utf-8',
+                'Content-Disposition' => 'attachment; filename="formflow-config.json"',
+            ],
+        ];
+    }
+
+    private function handleConfigImport(): array
+    {
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            return $this->htmlResponse(405, '<h1>Method not allowed</h1>');
+        }
+
+        if (!$this->verifyCsrfToken()) {
+            return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
+        }
+
+        $json = trim((string) ($_POST['config_json'] ?? ''));
+        $data = json_decode($json, true);
+
+        if (!is_array($data)) {
+            return $this->htmlResponse(422, '<h1>Invalid config JSON.</h1>');
+        }
+
+        if (isset($data['settings']) && is_array($data['settings'])) {
+            $settings = $this->settingsFromPost(array_merge($this->currentSettings(), $data['settings']));
+            $this->writeSettings($settings);
+        }
+
+        if (isset($data['security']['blocked_ips']) && is_array($data['security']['blocked_ips'])) {
+            $this->writeSecurityConfig(array_values(array_map('strval', $data['security']['blocked_ips'])));
+        }
+
+        if (isset($data['forms']) && is_array($data['forms'])) {
+            foreach ($data['forms'] as $formId => $config) {
+                if (is_string($formId) && is_array($config)) {
+                    $this->formRepository->update($formId, $config);
+                }
+            }
+        }
+
+        $this->recordAudit('config.import', 'Imported configuration.');
+
+        return ['status' => 302, 'body' => '', 'redirect' => '/admin/settings?saved=1'];
+    }
+
     private function setupStatus(): array
     {
         $settings = $this->currentSettings();
@@ -1060,6 +1321,26 @@ final class AdminController
             'storage' => is_dir($databaseDirectory) && is_writable($databaseDirectory) ? 'Writable' : 'Check storage',
             'forms' => (string) count($this->forms),
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $source
+     * @return array{0: string|null, 1: string|null, 2: string|null, 3: string|null, 4: string|null, 5: int}
+     */
+    private function submissionFilters(array $source): array
+    {
+        $formId = isset($source['form_id']) && $source['form_id'] !== '' ? (string) $source['form_id'] : null;
+        $status = isset($source['status']) && $source['status'] !== '' ? (string) $source['status'] : null;
+        $search = isset($source['q']) && trim((string) $source['q']) !== '' ? trim((string) $source['q']) : null;
+        $dateFrom = isset($source['date_from']) && trim((string) $source['date_from']) !== '' ? trim((string) $source['date_from']) : null;
+        $dateTo = isset($source['date_to']) && trim((string) $source['date_to']) !== '' ? trim((string) $source['date_to']) : null;
+        $perPage = (int) ($source['per_page'] ?? self::PER_PAGE);
+
+        if (!in_array($perPage, [20, 50, 100], true)) {
+            $perPage = self::PER_PAGE;
+        }
+
+        return [$formId, $status, $search, $dateFrom, $dateTo, $perPage];
     }
 
     private function recordAudit(string $action, string $detail): void

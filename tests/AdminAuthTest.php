@@ -14,14 +14,17 @@ final class AdminAuthTest extends TestCase
         string $passwordHash,
         int $maxAttempts = 5,
         int $windowMinutes = 15,
-        ?SqliteRateLimiter $rateLimiter = null
+        ?SqliteRateLimiter $rateLimiter = null,
+        string $totpSecret = ''
     ): AdminAuth {
         return new AdminAuth(
             'admin',
             $passwordHash,
             $rateLimiter ?? new SqliteRateLimiter(':memory:'),
             $maxAttempts,
-            $windowMinutes
+            $windowMinutes,
+            null,
+            $totpSecret
         );
     }
 
@@ -54,6 +57,14 @@ final class AdminAuthTest extends TestCase
         $auth = $this->makeAuth('');
 
         $this->assertSame('invalid', $auth->attemptLogin('admin', 'anything', 'ip-hash-1'));
+    }
+
+    public function testTotpSecretRequiresCode(): void
+    {
+        $auth = $this->makeAuth(password_hash('correct-password', PASSWORD_DEFAULT), totpSecret: 'JBSWY3DPEHPK3PXP');
+
+        $this->assertSame('invalid', $auth->attemptLogin('admin', 'correct-password', 'ip-hash-1'));
+        $this->assertSame('invalid', $auth->attemptLogin('admin', 'correct-password', 'ip-hash-1', '000000'));
     }
 
     public function testLockoutAfterMaxAttempts(): void

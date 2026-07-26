@@ -14,12 +14,13 @@ final class AdminAuth
         private readonly RateLimiterInterface $rateLimiter,
         private readonly int $maxAttempts,
         private readonly int $windowMinutes,
-        private readonly ?AdminUserRepositoryInterface $users = null
+        private readonly ?AdminUserRepositoryInterface $users = null,
+        private readonly string $bootstrapTotpSecret = ''
     ) {
     }
 
     /** @return 'ok'|'invalid'|'locked' */
-    public function attemptLogin(string $username, string $password, ?string $ipHash): string
+    public function attemptLogin(string $username, string $password, ?string $ipHash, ?string $totpCode = null): string
     {
         $this->rateLimiter->hit(self::RATE_LIMIT_FORM_ID, $ipHash);
 
@@ -36,7 +37,17 @@ final class AdminAuth
         $storedUser = $this->users?->findByUsername($username);
 
         if ($storedUser !== null) {
-            return password_verify($password, (string) $storedUser['password_hash']) ? 'ok' : 'invalid';
+            if (!password_verify($password, (string) $storedUser['password_hash'])) {
+                return 'invalid';
+            }
+
+            $secret = (string) ($storedUser['totp_secret'] ?? '');
+
+            if ($secret !== '' && !Totp::verify($secret, (string) $totpCode)) {
+                return 'invalid';
+            }
+
+            return 'ok';
         }
 
         if (
@@ -44,6 +55,10 @@ final class AdminAuth
             || !hash_equals($this->adminUsername, $username)
             || !password_verify($password, $this->adminPasswordHash)
         ) {
+            return 'invalid';
+        }
+
+        if ($this->bootstrapTotpSecret !== '' && !Totp::verify($this->bootstrapTotpSecret, (string) $totpCode)) {
             return 'invalid';
         }
 

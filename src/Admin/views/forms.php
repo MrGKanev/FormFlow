@@ -3,6 +3,7 @@
 /** @var array<string, array<string, mixed>> $forms */
 /** @var list<string> $dynamicFormIds */
 /** @var array<string, array<string, mixed>> $apiKeys */
+/** @var string $turnstileSiteKey */
 /** @var string $csrfToken */
 /** @var array<string, mixed> $values */
 ?>
@@ -32,13 +33,15 @@
             <?php
             $endpoint = '/' . $formId;
             $apiKey = $apiKeys[$formId]['api_key'] ?? '';
-            $snippet = '<form method="POST" action="' . $endpoint . '">' . PHP_EOL
+            $snippet = '<form method="POST" action="' . $endpoint . '" enctype="multipart/form-data">' . PHP_EOL
                 . '  <input type="hidden" name="_key" value="' . $apiKey . '">' . PHP_EOL
                 . '  <input type="text" name="_website" tabindex="-1" autocomplete="off" hidden>' . PHP_EOL
                 . '  <input type="email" name="email">' . PHP_EOL
                 . '  <textarea name="message"></textarea>' . PHP_EOL
+                . '  <input type="file" name="attachment">' . PHP_EOL
+                . (!empty($config['turnstile']) && $turnstileSiteKey !== '' ? '  <div class="cf-turnstile" data-sitekey="' . $turnstileSiteKey . '"></div>' . PHP_EOL : '')
                 . '  <button type="submit">Send</button>' . PHP_EOL
-                . '</form>';
+                . '</form>' . (!empty($config['turnstile']) && $turnstileSiteKey !== '' ? PHP_EOL . '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : '');
             ?>
             <li>
                 <strong><?= htmlspecialchars($formId, ENT_QUOTES, 'UTF-8') ?></strong>

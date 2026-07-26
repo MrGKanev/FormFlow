@@ -65,7 +65,7 @@ Minimal admin panel for reviewing submissions, protected with login + IP whiteli
 
 Routes:
 
-- `/admin` - dashboard with paginated submissions (filters by form and status).
+- `/admin` - dashboard with paginated submissions, search, date range filters, page size control, bulk actions, and form analytics.
 - `/admin/forms` - review configured forms and copy integration snippets.
 - `/admin/forms/new` - create a new database-backed form endpoint.
 - `/admin/forms/{id}/edit` - edit an existing form, storing changes as a database-backed configuration.
@@ -75,10 +75,13 @@ Routes:
 - `/admin/whitelist` - management of the IP whitelist for the admin panel (adding/removing IP/CIDR entries).
 - `/admin/api-keys` - generate/regenerate an API key per form.
 - `/admin/delivery` - recent delivery states and failed-send errors.
-- `/admin/export` - CSV export of submissions, respecting dashboard filters.
+- `/admin/export` - CSV export of submissions, respecting dashboard search/date/status/form filters.
 - `/admin/settings` - edit runtime, SMTP delivery, retention, storage, login-rate-limit, admin-account, and global blocklist settings; send a test email; run retention cleanup.
 - `/admin/users` - create/delete additional admin users. Additional users are only managed from the admin panel.
 - `/admin/audit` - recent admin actions.
+- `/admin/backup` - download a SQLite database backup.
+- `/admin/config/export` and `/admin/config/import` - move settings/forms/security config as JSON.
+- `/admin/recovery?token=...` - one-time bootstrap password recovery path after generating a recovery token from settings.
 
 Requires:
 
@@ -98,6 +101,10 @@ vendor/bin/phpunit
 - Per form: recipient, `allowed_origins`, `subject`, `success_redirect`, `turnstile`, `require_api_key`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`. Form endpoints accept all submitted user fields; system fields such as `_key`, `_website`, `cf-turnstile-response`, and `csrf_token` are not stored or emailed. API keys are generated from `/admin/api-keys`.
 - Global app settings can be edited from `/admin/settings`. It writes selected values to `.env`, login-rate-limit values to `config/admin.php`, and the global IP blocklist to `config/security.php`.
 - Mail can be configured with standard SMTP fields: `SMTP_HOST`, `SMTP_PORT`, `SMTP_ENCRYPTION` (`tls`, `ssl`, or `none`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM`, and `MAIL_FROM_NAME`. `MAILER_DSN` is still supported as an advanced override; when set, it takes precedence over the individual SMTP fields.
+- Discord and Slack notifications use `DISCORD_WEBHOOK_URL` and `SLACK_WEBHOOK_URL`.
+- File uploads are accepted from multipart forms and stored under `storage/uploads`; payloads store the original filename plus local storage path.
+- Turnstile snippets use `TURNSTILE_SITE_KEY` when a form has Turnstile enabled.
+- Admin 2FA uses TOTP secrets (`ADMIN_TOTP_SECRET` for the bootstrap user, optional TOTP secret for DB-backed users).
 - `config/security.php` - global IP blocklist (exact IP addresses or IPv4 CIDR ranges).
 
 ## Protections

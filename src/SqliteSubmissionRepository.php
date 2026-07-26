@@ -132,9 +132,17 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         return $row === false ? null : $row;
     }
 
-    public function findPaginated(?string $formId, ?string $status, int $page, int $perPage): array
+    public function findPaginated(
+        ?string $formId,
+        ?string $status,
+        int $page,
+        int $perPage,
+        ?string $search = null,
+        ?string $dateFrom = null,
+        ?string $dateTo = null
+    ): array
     {
-        [$where, $params] = $this->buildFilter($formId, $status);
+        [$where, $params] = $this->buildFilter($formId, $status, $search, $dateFrom, $dateTo);
 
         $page = max(1, $page);
         $perPage = max(1, $perPage);
@@ -157,15 +165,39 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         return $statement->fetchAll();
     }
 
-    public function findForExport(?string $formId, ?string $status): array
+    public function findForExport(
+        ?string $formId,
+        ?string $status,
+        ?string $search = null,
+        ?string $dateFrom = null,
+        ?string $dateTo = null
+    ): array
     {
-        [$where, $params] = $this->buildFilter($formId, $status);
+        [$where, $params] = $this->buildFilter($formId, $status, $search, $dateFrom, $dateTo);
 
         $statement = $this->pdo->prepare(
             'SELECT * FROM submissions' . $where . '
              ORDER BY created_at DESC, id DESC'
         );
         $statement->execute($params);
+
+        return $statement->fetchAll();
+    }
+
+    public function findByIds(array $ids): array
+    {
+        $ids = array_values(array_unique(array_filter($ids, static fn (int $id): bool => $id > 0)));
+
+        if ($ids === []) {
+            return [];
+        }
+
+        $placeholders = implode(', ', array_fill(0, count($ids), '?'));
+        $statement = $this->pdo->prepare(
+            'SELECT * FROM submissions WHERE id IN (' . $placeholders . ')
+             ORDER BY created_at DESC, id DESC'
+        );
+        $statement->execute($ids);
 
         return $statement->fetchAll();
     }
@@ -184,9 +216,41 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         return $statement->fetchAll();
     }
 
-    public function count(?string $formId, ?string $status): int
+    public function analytics(): array
     {
-        [$where, $params] = $this->buildFilter($formId, $status);
+        $statement = $this->pdo->prepare(
+            <<<SQL
+            SELECT
+                form_id,
+                COUNT(*) AS total,
+                SUM(CASE WHEN created_at >= :day_cutoff THEN 1 ELSE 0 END) AS day_count,
+                SUM(CASE WHEN created_at >= :week_cutoff THEN 1 ELSE 0 END) AS week_count,
+                SUM(CASE WHEN created_at >= :month_cutoff THEN 1 ELSE 0 END) AS month_count,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+                SUM(CASE WHEN status LIKE 'blocked_%' THEN 1 ELSE 0 END) AS blocked_count,
+                MAX(created_at) AS last_submission
+            FROM submissions
+            GROUP BY form_id
+            ORDER BY total DESC, form_id ASC
+            SQL
+        );
+        $statement->execute([
+            'day_cutoff' => gmdate('c', time() - 86400),
+            'week_cutoff' => gmdate('c', time() - (7 * 86400)),
+            'month_cutoff' => gmdate('c', time() - (30 * 86400)),
+        ]);
+
+        return $statement->fetchAll();
+    }
+
+    public function count(
+        ?string $formId,
+        ?string $status,
+        ?string $search = null,
+        ?string $dateFrom = null,
+        ?string $dateTo = null
+    ): int {
+        [$where, $params] = $this->buildFilter($formId, $status, $search, $dateFrom, $dateTo);
 
         $statement = $this->pdo->prepare('SELECT COUNT(*) AS total FROM submissions' . $where);
         $statement->execute($params);
@@ -195,7 +259,13 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
     }
 
     /** @return array{0: string, 1: array<string, string>} */
-    private function buildFilter(?string $formId, ?string $status): array
+    private function buildFilter(
+        ?string $formId,
+        ?string $status,
+        ?string $search = null,
+        ?string $dateFrom = null,
+        ?string $dateTo = null
+    ): array
     {
         $conditions = [];
         $params = [];
@@ -208,6 +278,21 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         if ($status !== null) {
             $conditions[] = 'status = :status';
             $params['status'] = $status;
+        }
+
+        if ($search !== null && trim($search) !== '') {
+            $conditions[] = '(payload LIKE :search OR form_id LIKE :search OR status LIKE :search OR error_message LIKE :search)';
+            $params['search'] = '%' . trim($search) . '%';
+        }
+
+        if ($dateFrom !== null && trim($dateFrom) !== '') {
+            $conditions[] = 'created_at >= :date_from';
+            $params['date_from'] = trim($dateFrom) . 'T00:00:00+00:00';
+        }
+
+        if ($dateTo !== null && trim($dateTo) !== '') {
+            $conditions[] = 'created_at <= :date_to';
+            $params['date_to'] = trim($dateTo) . 'T23:59:59+00:00';
         }
 
         $where = $conditions === [] ? '' : ' WHERE ' . implode(' AND ', $conditions);

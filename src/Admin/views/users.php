@@ -23,6 +23,7 @@
         <h2>New admin user</h2>
         <label><span>Username</span><input type="text" name="username" required autocomplete="username"></label>
         <label><span>Password</span><input type="password" name="password" required autocomplete="new-password"></label>
+        <label><span>TOTP secret</span><input type="text" name="totp_secret" placeholder="Optional"></label>
         <div class="form-actions"><button type="submit">Create user</button></div>
     </form>
 

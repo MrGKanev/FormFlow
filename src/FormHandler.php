@@ -17,7 +17,9 @@ final class FormHandler
         private readonly TurnstileVerifierInterface $turnstile,
         private readonly RateLimiterInterface $rateLimiter,
         private readonly string $ipHashSecret,
-        private readonly FormApiKeyRepositoryInterface $apiKeys
+        private readonly FormApiKeyRepositoryInterface $apiKeys,
+        private readonly ?WebhookNotifierInterface $webhookNotifier = null,
+        private readonly string $uploadDirectory = ''
     ) {
     }
 
@@ -91,7 +93,7 @@ final class FormHandler
             ];
         }
 
-        $fields = $this->extractFields($_POST);
+        $fields = array_merge($this->extractFields($_POST), $this->extractUploadedFiles($_FILES ?? []));
 
         $this->validateEmailField($fields);
 
@@ -132,6 +134,11 @@ final class FormHandler
             $this->repository->markFailed($submissionId, $exception->getMessage());
 
             throw new RuntimeException('Unable to send the submission email.', 0, $exception);
+        }
+
+        try {
+            $this->webhookNotifier?->notify($formId, $fields);
+        } catch (Throwable) {
         }
 
         return [
@@ -216,6 +223,77 @@ final class FormHandler
         }
 
         return $result;
+    }
+
+    /** @return array<string, string> */
+    private function extractUploadedFiles(array $files): array
+    {
+        if ($files === [] || $this->uploadDirectory === '') {
+            return [];
+        }
+
+        if (!is_dir($this->uploadDirectory)) {
+            mkdir($this->uploadDirectory, 0775, true);
+        }
+
+        $stored = [];
+
+        foreach ($files as $field => $file) {
+            if (!is_array($file) || !isset($file['error'])) {
+                continue;
+            }
+
+            if (is_array($file['error'])) {
+                foreach ($file['error'] as $index => $error) {
+                    $entry = [
+                        'name' => (string) ($file['name'][$index] ?? ''),
+                        'tmp_name' => (string) ($file['tmp_name'][$index] ?? ''),
+                        'error' => (int) $error,
+                        'size' => (int) ($file['size'][$index] ?? 0),
+                    ];
+                    $this->storeUploadedFile((string) $field . '_' . (int) $index, $entry, $stored);
+                }
+
+                continue;
+            }
+
+            $this->storeUploadedFile((string) $field, [
+                'name' => (string) ($file['name'] ?? ''),
+                'tmp_name' => (string) ($file['tmp_name'] ?? ''),
+                'error' => (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE),
+                'size' => (int) ($file['size'] ?? 0),
+            ], $stored);
+        }
+
+        return $stored;
+    }
+
+    /** @param array{name: string, tmp_name: string, error: int, size: int} $file @param array<string, string> $stored */
+    private function storeUploadedFile(string $field, array $file, array &$stored): void
+    {
+        if ($file['error'] === UPLOAD_ERR_NO_FILE) {
+            return;
+        }
+
+        if ($file['error'] !== UPLOAD_ERR_OK) {
+            throw new InvalidArgumentException(sprintf('Upload "%s" failed.', $field));
+        }
+
+        if ($file['size'] > 10 * 1024 * 1024) {
+            throw new InvalidArgumentException(sprintf('Upload "%s" is too large.', $field));
+        }
+
+        $safeName = preg_replace('/[^A-Za-z0-9._-]+/', '-', basename($file['name'])) ?: 'upload.bin';
+        $target = rtrim($this->uploadDirectory, '/') . '/' . gmdate('YmdHis') . '-' . bin2hex(random_bytes(6)) . '-' . $safeName;
+        $moved = is_uploaded_file($file['tmp_name'])
+            ? move_uploaded_file($file['tmp_name'], $target)
+            : rename($file['tmp_name'], $target);
+
+        if (!$moved) {
+            throw new InvalidArgumentException(sprintf('Upload "%s" could not be stored.', $field));
+        }
+
+        $stored[$field] = $file['name'] . ' (' . $target . ')';
     }
 
     private function isSystemField(string $field): bool

@@ -5,6 +5,7 @@ declare(strict_types=1);
 use formflow\Admin\AdminController;
 use formflow\AdminAuth;
 use formflow\AdminIpWhitelist;
+use formflow\CurlWebhookNotifier;
 use formflow\FormHandler;
 use formflow\Install\InstallController;
 use formflow\IpBlocklist;
@@ -347,7 +348,8 @@ if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
             new SqliteRateLimiter($databasePath),
             (int) ($adminConfig['login_rate_limit']['max'] ?? 5),
             (int) ($adminConfig['login_rate_limit']['window_minutes'] ?? 15),
-            $adminUsers
+            $adminUsers,
+            getenv('ADMIN_TOTP_SECRET') ?: ''
         ),
         new AdminIpWhitelist($allowedIps, $whitelistRepository),
         new SqliteSubmissionRepository($databasePath),
@@ -413,7 +415,12 @@ try {
         new Turnstile(getenv('TURNSTILE_SECRET') ?: ''),
         new SqliteRateLimiter($databasePath),
         $ipHashSecret,
-        new SqliteFormApiKeyRepository($databasePath)
+        new SqliteFormApiKeyRepository($databasePath),
+        new CurlWebhookNotifier(
+            getenv('DISCORD_WEBHOOK_URL') ?: null,
+            getenv('SLACK_WEBHOOK_URL') ?: null
+        ),
+        $root . '/storage/uploads'
     );
 
     $result = $handler->handle($formId);

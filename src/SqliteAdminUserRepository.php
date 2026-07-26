@@ -53,17 +53,18 @@ final class SqliteAdminUserRepository implements AdminUserRepositoryInterface
         return $statement->fetchAll();
     }
 
-    public function create(string $username, string $passwordHash): void
+    public function create(string $username, string $passwordHash, ?string $totpSecret = null): void
     {
         $statement = $this->pdo->prepare(
-            'INSERT INTO admin_users (username, password_hash, created_at)
-             VALUES (:username, :password_hash, :created_at)'
+            'INSERT INTO admin_users (username, password_hash, totp_secret, created_at)
+             VALUES (:username, :password_hash, :totp_secret, :created_at)'
         );
 
         try {
             $statement->execute([
                 'username' => $username,
                 'password_hash' => $passwordHash,
+                'totp_secret' => $totpSecret,
                 'created_at' => gmdate('c'),
             ]);
         } catch (PDOException $exception) {
@@ -88,8 +89,16 @@ final class SqliteAdminUserRepository implements AdminUserRepositoryInterface
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
+                totp_secret TEXT,
                 created_at TEXT NOT NULL
             )'
         );
+
+        $columns = $this->pdo->query('PRAGMA table_info(admin_users)')->fetchAll();
+        $columnNames = array_column($columns, 'name');
+
+        if (!in_array('totp_secret', $columnNames, true)) {
+            $this->pdo->exec('ALTER TABLE admin_users ADD COLUMN totp_secret TEXT');
+        }
     }
 }

@@ -3,13 +3,23 @@
 /** @var bool $saved */
 /** @var string|null $notice */
 /** @var array<string, mixed> $settings */
+/** @var array<string, string> $setupStatus */
 /** @var string $csrfToken */
+/** @var string|null $totpQrSvg */
+/** @var string $totpProvisioningUri */
 $value = static fn (string $key, string $default = ''): string => htmlspecialchars(
     (string) ($settings[$key] ?? $default),
     ENT_QUOTES,
     'UTF-8'
 );
 $selected = static fn (string $key, string $value): string => (string) ($settings[$key] ?? '') === $value ? ' selected' : '';
+$setupBadge = static function (string $value): string {
+    return match ($value) {
+        'Configured', 'Writable' => 'good',
+        'Optional' => 'warn',
+        default => 'danger',
+    };
+};
 ?>
 <div class="page-header">
     <div>
@@ -30,6 +40,44 @@ $selected = static fn (string $key, string $value): string => (string) ($setting
 <?php if ($error !== null): ?>
     <p class="banner error"><?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?></p>
 <?php endif; ?>
+
+<section class="panel setup-panel">
+    <div class="section-heading">
+        <h2>Setup status</h2>
+        <span class="badge <?= htmlspecialchars($setupBadge($setupStatus['storage'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
+            <?= htmlspecialchars($setupStatus['storage'] ?? 'Check storage', ENT_QUOTES, 'UTF-8') ?>
+        </span>
+    </div>
+    <ul class="setup-list">
+        <li>
+            <span>
+                <strong>Mail</strong>
+                <small>SMTP host or DSN plus sender address</small>
+            </span>
+            <span class="badge <?= htmlspecialchars($setupBadge($setupStatus['mail'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
+                <?= htmlspecialchars($setupStatus['mail'] ?? 'Needs SMTP', ENT_QUOTES, 'UTF-8') ?>
+            </span>
+        </li>
+        <li>
+            <span>
+                <strong>Turnstile</strong>
+                <small>Secret validates submissions; site key appears in snippets</small>
+            </span>
+            <span class="badge <?= htmlspecialchars($setupBadge($setupStatus['turnstile'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
+                <?= htmlspecialchars($setupStatus['turnstile'] ?? 'Optional', ENT_QUOTES, 'UTF-8') ?>
+            </span>
+        </li>
+        <li>
+            <span>
+                <strong>Storage</strong>
+                <small>Database directory must be writable</small>
+            </span>
+            <span class="badge <?= htmlspecialchars($setupBadge($setupStatus['storage'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
+                <?= htmlspecialchars($setupStatus['storage'] ?? 'Check storage', ENT_QUOTES, 'UTF-8') ?>
+            </span>
+        </li>
+    </ul>
+</section>
 
 <form method="POST" action="/admin/settings" class="settings-form">
     <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
@@ -115,6 +163,18 @@ $selected = static fn (string $key, string $value): string => (string) ($setting
                     <span>Cloudflare Turnstile secret</span>
                     <input type="text" name="turnstile_secret" value="<?= $value('turnstile_secret') ?>">
                 </label>
+                <label class="span-2">
+                    <span>Cloudflare Turnstile site key</span>
+                    <input type="text" name="turnstile_site_key" value="<?= $value('turnstile_site_key') ?>">
+                </label>
+                <label class="span-2">
+                    <span>Discord webhook URL</span>
+                    <input type="url" name="discord_webhook_url" value="<?= $value('discord_webhook_url') ?>" placeholder="https://discord.com/api/webhooks/...">
+                </label>
+                <label class="span-2">
+                    <span>Slack webhook URL</span>
+                    <input type="url" name="slack_webhook_url" value="<?= $value('slack_webhook_url') ?>" placeholder="https://hooks.slack.com/services/...">
+                </label>
             </div>
         </section>
 
@@ -131,6 +191,10 @@ $selected = static fn (string $key, string $value): string => (string) ($setting
                 <label>
                     <span>New password</span>
                     <input type="password" name="admin_password" autocomplete="new-password" placeholder="Leave blank to keep current">
+                </label>
+                <label class="span-2">
+                    <span>Bootstrap TOTP secret</span>
+                    <input type="text" name="admin_totp_secret" value="<?= $value('admin_totp_secret') ?>">
                 </label>
                 <label>
                     <span>Login attempts</span>
@@ -190,6 +254,62 @@ $selected = static fn (string $key, string $value): string => (string) ($setting
                 <input type="number" name="retention_days" min="1" value="<?= $value('retention_days', '180') ?>">
             </label>
             <div class="form-actions"><button type="submit" class="secondary">Run cleanup</button></div>
+        </form>
+    </section>
+</div>
+
+<div class="settings-grid">
+    <section class="panel">
+        <div class="section-heading">
+            <h2>Recovery</h2>
+        </div>
+        <form method="POST" action="/admin/settings" class="utility-form">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+            <input type="hidden" name="action" value="generate_recovery">
+            <div class="form-actions"><button type="submit" class="secondary">Generate recovery token</button></div>
+        </form>
+    </section>
+
+    <section class="panel">
+        <div class="section-heading">
+            <h2>2FA</h2>
+        </div>
+        <?php if (($totpQrSvg ?? null) !== null): ?>
+            <div class="totp-setup">
+                <div class="totp-qr-frame">
+                    <?= $totpQrSvg ?>
+                </div>
+                <div>
+                    <p class="muted">Scan this QR code with an authenticator app.</p>
+                    <code><?= htmlspecialchars($totpProvisioningUri, ENT_QUOTES, 'UTF-8') ?></code>
+                </div>
+            </div>
+        <?php endif; ?>
+        <form method="POST" action="/admin/settings" class="utility-form">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+            <input type="hidden" name="action" value="generate_totp">
+            <div class="form-actions"><button type="submit" class="secondary">Generate TOTP secret</button></div>
+        </form>
+    </section>
+
+    <section class="panel">
+        <div class="section-heading">
+            <h2>Backup</h2>
+        </div>
+        <div class="form-actions">
+            <a href="/admin/backup" class="button secondary">Download database</a>
+            <a href="/admin/config/export" class="button secondary">Export config</a>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="section-heading">
+            <h2>Import config</h2>
+        </div>
+        <form method="POST" action="/admin/config/import" class="utility-form">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+            <label><span>Config JSON</span><textarea name="config_json" rows="7"></textarea></label>
+            <div class="form-actions"><button type="submit" class="secondary">Import config</button></div>
         </form>
     </section>
 </div>

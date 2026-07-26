@@ -15,6 +15,7 @@
     <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
     <label><span>Username</span><input type="text" name="username" autocomplete="username" required></label>
     <label><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>
+    <label><span>2FA code</span><input type="text" name="totp_code" inputmode="numeric" autocomplete="one-time-code" placeholder="Optional"></label>
     <button type="submit">Log in</button>
 </form>
 <?php if ($isLocal): ?>

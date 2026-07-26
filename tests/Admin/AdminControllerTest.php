@@ -785,6 +785,40 @@ final class AdminControllerTest extends TestCase
         }
     }
 
+    public function testSettingsTotpGenerationRendersQrCode(): void
+    {
+        $files = $this->settingsFiles();
+
+        try {
+            $controller = $this->makeController(
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+            $this->login($controller);
+
+            $controller->handle('admin/settings');
+            $token = $this->csrfToken();
+
+            $_SERVER['REQUEST_METHOD'] = 'POST';
+            $_POST = [
+                'action' => 'generate_totp',
+                'csrf_token' => $token,
+            ];
+
+            $result = $controller->handle('admin/settings');
+
+            $this->assertSame(200, $result['status']);
+            $this->assertStringContainsString('<svg class="totp-qr"', $result['body']);
+            $this->assertStringContainsString('otpauth://totp/FormFlow%3Aadmin', $result['body']);
+
+            $env = file_get_contents($files['env']);
+            $this->assertMatchesRegularExpression("/ADMIN_TOTP_SECRET='[A-Z2-7]+'/", (string) $env);
+        } finally {
+            $this->removeSettingsFiles($files);
+        }
+    }
+
     public function testDbAdminUserCanLogin(): void
     {
         $users = new SqliteAdminUserRepository(':memory:');
@@ -940,5 +974,88 @@ final class AdminControllerTest extends TestCase
         $this->assertStringContainsString('Delivery log', $delivery['body']);
         $this->assertSame(200, $auditPage['status']);
         $this->assertStringContainsString('test.action', $auditPage['body']);
+    }
+
+    public function testDashboardFiltersIncludeSearchDatesAndPageSize(): void
+    {
+        $submissions = new SqliteSubmissionRepository(':memory:');
+        $submissions->create('contact', ['name' => 'Ada', 'email' => 'ada@example.com'], null);
+        $submissions->create('support', ['name' => 'Grace'], null);
+        $controller = $this->makeController(['203.0.113.10'], $submissions);
+        $this->login($controller);
+
+        $_GET = [
+            'q' => 'ada@example.com',
+            'date_from' => '2000-01-01',
+            'date_to' => '2999-12-31',
+            'per_page' => '50',
+        ];
+
+        $result = $controller->handle('admin');
+
+        $this->assertSame(200, $result['status']);
+        $this->assertStringContainsString('value="ada@example.com"', $result['body']);
+        $this->assertStringContainsString('value="2000-01-01"', $result['body']);
+        $this->assertStringContainsString('<option value="50" selected', $result['body']);
+    }
+
+    public function testRecoveryTokenCanResetBootstrapPassword(): void
+    {
+        $files = $this->settingsFiles();
+        $token = 'recovery-token';
+        file_put_contents($files['env'], "RECOVERY_TOKEN_HASH='" . password_hash($token, PASSWORD_DEFAULT) . "'" . PHP_EOL, FILE_APPEND);
+
+        try {
+            $controller = $this->makeController(
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+
+            $_GET = ['token' => $token];
+            $get = $controller->handle('admin/recovery');
+            $this->assertSame(200, $get['status']);
+            $tokenCsrf = $this->csrfToken();
+
+            $_SERVER['REQUEST_METHOD'] = 'POST';
+            $_POST = [
+                'token' => $token,
+                'password' => 'new-bootstrap-password',
+                'csrf_token' => $tokenCsrf,
+            ];
+
+            $post = $controller->handle('admin/recovery');
+
+            $this->assertSame(302, $post['status']);
+            $env = (string) file_get_contents($files['env']);
+            $this->assertStringContainsString("RECOVERY_TOKEN_HASH=''", $env);
+            preg_match("/ADMIN_PASSWORD_HASH='([^']+)'/", $env, $matches);
+            $this->assertTrue(password_verify('new-bootstrap-password', $matches[1]));
+        } finally {
+            $_GET = [];
+            $this->removeSettingsFiles($files);
+        }
+    }
+
+    public function testConfigExportReturnsJson(): void
+    {
+        $files = $this->settingsFiles();
+
+        try {
+            $controller = $this->makeController(
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+            $this->login($controller);
+
+            $result = $controller->handle('admin/config/export');
+
+            $this->assertSame(200, $result['status']);
+            $this->assertSame('application/json; charset=utf-8', $result['headers']['Content-Type']);
+            $this->assertIsArray(json_decode($result['body'], true));
+        } finally {
+            $this->removeSettingsFiles($files);
+        }
     }
 }

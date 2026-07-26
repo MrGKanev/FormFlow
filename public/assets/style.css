@@ -370,6 +370,8 @@ input[type="text"],
 input[type="password"],
 input[type="email"],
 input[type="url"],
+input[type="search"],
+input[type="date"],
 input[type="number"],
 textarea,
 select {
@@ -400,6 +402,8 @@ input::placeholder {
 }
 
 input:focus,
+input[type="search"]:focus,
+input[type="date"]:focus,
 textarea:focus,
 select:focus {
     border-color: var(--accent);
@@ -505,15 +509,63 @@ select:focus {
     margin-top: 4px;
 }
 
+.totp-setup {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 14px;
+    align-items: start;
+    margin-bottom: 16px;
+}
+
+.totp-qr-frame {
+    width: 152px;
+    max-width: 100%;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: #fff;
+}
+
+.totp-qr {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
 .filter-form {
     display: grid;
-    grid-template-columns: minmax(190px, 1fr) minmax(170px, 0.75fr) auto;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 14px;
     align-items: end;
 }
 
-.filter-form label {
+.filter-field {
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     margin-bottom: 0;
+    background: var(--surface-2);
+}
+
+.filter-field span {
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 760;
+    text-transform: uppercase;
+}
+
+.filter-field input,
+.filter-field select {
+    min-height: 40px;
+    margin-top: 0.35rem;
+    border-color: var(--border);
+    background: var(--surface);
+}
+
+.filter-form .form-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
 }
 
 button,
@@ -574,6 +626,11 @@ button.secondary:hover,
     border-radius: var(--radius);
     background: var(--surface);
     box-shadow: var(--shadow);
+}
+
+.table-wrap.embedded {
+    margin-bottom: 0;
+    box-shadow: none;
 }
 
 table {
@@ -766,6 +823,43 @@ code {
     margin: 0;
     font-size: 1.35rem;
     font-weight: 780;
+}
+
+.setup-panel {
+    margin-bottom: 18px;
+}
+
+.setup-list {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    padding: 0;
+    margin: 0;
+    list-style: none;
+}
+
+.setup-list li {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+}
+
+.setup-list strong,
+.setup-list small {
+    display: block;
+}
+
+.setup-list small {
+    margin-top: 0.18rem;
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 500;
 }
 
 .auth-panel {
@@ -1021,6 +1115,7 @@ ul.features li strong {
     .form-grid,
     .dashboard-summary,
     .option-grid,
+    .totp-setup,
     .split-grid,
     .form-list.prominent,
     .settings-grid,
