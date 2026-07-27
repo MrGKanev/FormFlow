@@ -11,6 +11,7 @@
         <p class="page-meta">Control which IP addresses can access the admin console.</p>
     </div>
 </div>
+<?php $settingsSection = 'whitelist'; require __DIR__ . '/_settings-nav.php'; ?>
 <?php if ($error !== null): ?>
     <p class="banner error"><?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?></p>
 <?php endif; ?>

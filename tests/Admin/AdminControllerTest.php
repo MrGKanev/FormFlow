@@ -466,109 +466,51 @@ final class AdminControllerTest extends TestCase
         $this->assertSame([], $whitelistRepository->list());
     }
 
-    public function testApiKeysPageListsConfiguredFormsWithoutGeneratedKeys(): void
-    {
-        $controller = $this->makeController();
-        $this->login($controller);
-
-        $result = $controller->handle('admin/api-keys');
-
-        $this->assertSame(200, $result['status']);
-        $this->assertStringContainsString('contact', $result['body']);
-        $this->assertStringContainsString('support', $result['body']);
-        $this->assertStringContainsString('not generated', $result['body']);
-    }
-
-    public function testApiKeysPagePostGeneratesKeyAndRedirects(): void
-    {
-        $apiKeys = new SqliteFormApiKeyRepository(':memory:');
-        $controller = $this->makeController(apiKeys: $apiKeys);
-        $this->login($controller);
-
-        $controller->handle('admin/api-keys');
-        $token = $this->csrfToken();
-
-        $_SERVER['REQUEST_METHOD'] = 'POST';
-        $_POST = ['form_id' => 'contact', 'csrf_token' => $token];
-
-        $result = $controller->handle('admin/api-keys');
-
-        $this->assertSame(302, $result['status']);
-        $this->assertSame('/admin/api-keys', $result['redirect']);
-        $this->assertNotNull($apiKeys->get('contact'));
-    }
-
-    public function testApiKeysPagePostRegeneratesReplacingPreviousKey(): void
-    {
-        $apiKeys = new SqliteFormApiKeyRepository(':memory:');
-        $firstKey = $apiKeys->regenerate('contact');
-
-        $controller = $this->makeController(apiKeys: $apiKeys);
-        $this->login($controller);
-
-        $controller->handle('admin/api-keys');
-        $token = $this->csrfToken();
-
-        $_SERVER['REQUEST_METHOD'] = 'POST';
-        $_POST = ['form_id' => 'contact', 'csrf_token' => $token];
-        $controller->handle('admin/api-keys');
-
-        $this->assertNotSame($firstKey, $apiKeys->get('contact'));
-    }
-
-    public function testApiKeysPagePostWithUnknownFormIdReturns422(): void
-    {
-        $controller = $this->makeController();
-        $this->login($controller);
-
-        $controller->handle('admin/api-keys');
-        $token = $this->csrfToken();
-
-        $_SERVER['REQUEST_METHOD'] = 'POST';
-        $_POST = ['form_id' => 'unknown-form', 'csrf_token' => $token];
-
-        $result = $controller->handle('admin/api-keys');
-
-        $this->assertSame(422, $result['status']);
-    }
-
-    public function testApiKeysPagePostWithoutCsrfTokenReturns419(): void
-    {
-        $apiKeys = new SqliteFormApiKeyRepository(':memory:');
-        $controller = $this->makeController(apiKeys: $apiKeys);
-        $this->login($controller);
-
-        $_SERVER['REQUEST_METHOD'] = 'POST';
-        $_POST = ['form_id' => 'contact'];
-
-        $result = $controller->handle('admin/api-keys');
-
-        $this->assertSame(419, $result['status']);
-        $this->assertNull($apiKeys->get('contact'));
-    }
-
     public function testFormsPageListsConfiguredForms(): void
     {
+        $files = $this->settingsFiles();
+
+        try {
+            $controller = $this->makeController(
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+            $this->login($controller);
+
+            $result = $controller->handle('admin/forms');
+
+            $this->assertSame(200, $result['status']);
+            $this->assertStringContainsString('contact', $result['body']);
+            $this->assertStringContainsString('support@example.com', $result['body']);
+            $this->assertStringContainsString('action=&quot;https://forms.example.com/contact&quot;', $result['body']);
+            $this->assertStringContainsString('href="/admin/forms/new"', $result['body']);
+            $this->assertStringNotContainsString('href="/admin/api-keys"', $result['body']);
+            $this->assertStringNotContainsString('name="form_id"', $result['body']);
+            $this->assertStringNotContainsString('name="allowed_fields[]"', $result['body']);
+            $this->assertStringNotContainsString('name="custom_allowed_fields"', $result['body']);
+            $this->assertStringNotContainsString('name="required_fields[]"', $result['body']);
+            $this->assertStringNotContainsString('name="custom_required_fields"', $result['body']);
+        } finally {
+            $this->removeSettingsFiles($files);
+        }
+    }
+
+    public function testApiKeysRouteIsNotAvailable(): void
+    {
         $controller = $this->makeController();
         $this->login($controller);
 
-        $result = $controller->handle('admin/forms');
+        $result = $controller->handle('admin/api-keys');
 
-        $this->assertSame(200, $result['status']);
-        $this->assertStringContainsString('contact', $result['body']);
-        $this->assertStringContainsString('support@example.com', $result['body']);
-        $this->assertStringContainsString('href="/admin/forms/new"', $result['body']);
-        $this->assertStringNotContainsString('name="form_id"', $result['body']);
-        $this->assertStringNotContainsString('name="allowed_fields[]"', $result['body']);
-        $this->assertStringNotContainsString('name="custom_allowed_fields"', $result['body']);
-        $this->assertStringNotContainsString('name="required_fields[]"', $result['body']);
-        $this->assertStringNotContainsString('name="custom_required_fields"', $result['body']);
+        $this->assertSame(404, $result['status']);
     }
 
     public function testNewFormPagePostCreatesFormAndRedirects(): void
     {
         $formRepository = new SqliteFormRepository(':memory:');
-        $controller = $this->makeController(formRepository: $formRepository);
+        $apiKeys = new SqliteFormApiKeyRepository(':memory:');
+        $controller = $this->makeController(formRepository: $formRepository, apiKeys: $apiKeys);
         $this->login($controller);
 
         $newPage = $controller->handle('admin/forms/new');
@@ -602,6 +544,7 @@ final class AdminControllerTest extends TestCase
         $this->assertArrayNotHasKey('allowed_fields', $forms['newsletter']);
         $this->assertArrayNotHasKey('required_fields', $forms['newsletter']);
         $this->assertSame(['max' => 3, 'window_minutes' => 15], $forms['newsletter']['rate_limit_per_ip']);
+        $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', (string) $apiKeys->get('newsletter'));
     }
 
     public function testNewFormPagePostRejectsDuplicateFormId(): void
@@ -663,7 +606,35 @@ final class AdminControllerTest extends TestCase
             $this->assertSame(200, $result['status']);
             $this->assertStringContainsString('Runtime configuration', $result['body']);
             $this->assertStringContainsString('https://forms.example.com', $result['body']);
+            $this->assertStringContainsString('href="/admin/whitelist"', $result['body']);
+            $this->assertStringContainsString('href="/admin/users"', $result['body']);
+            $this->assertStringContainsString('href="/admin/audit"', $result['body']);
+            $this->assertStringContainsString('href="/admin/settings?tab=delivery"', $result['body']);
+            $this->assertStringContainsString('href="/admin/settings?tab=maintenance"', $result['body']);
+        } finally {
+            $this->removeSettingsFiles($files);
+        }
+    }
+
+    public function testSettingsProtectionTabRendersOnlyProtectionFields(): void
+    {
+        $files = $this->settingsFiles();
+
+        try {
+            $controller = $this->makeController(
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+            $this->login($controller);
+            $_GET = ['tab' => 'protection'];
+
+            $result = $controller->handle('admin/settings');
+
+            $this->assertSame(200, $result['status']);
+            $this->assertStringContainsString('Global blocklist', $result['body']);
             $this->assertStringContainsString('203.0.113.5', $result['body']);
+            $this->assertStringNotContainsString('SMTP host', $result['body']);
         } finally {
             $this->removeSettingsFiles($files);
         }
@@ -711,7 +682,7 @@ final class AdminControllerTest extends TestCase
             $result = $controller->handle('admin/settings');
 
             $this->assertSame(302, $result['status']);
-            $this->assertSame('/admin/settings?saved=1', $result['redirect']);
+            $this->assertSame('/admin/settings?tab=general&saved=1', $result['redirect']);
 
             $env = file_get_contents($files['env']);
             $this->assertStringContainsString("APP_ENV='local'", (string) $env);
@@ -732,6 +703,82 @@ final class AdminControllerTest extends TestCase
 
             $securityConfig = require $files['security'];
             $this->assertSame(['198.51.100.5', '198.51.100.0/24'], $securityConfig['blocked_ips']);
+        } finally {
+            $this->removeSettingsFiles($files);
+        }
+    }
+
+    public function testSettingsTabSavePreservesValuesFromOtherTabs(): void
+    {
+        $files = $this->settingsFiles();
+
+        try {
+            $controller = $this->makeController(
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+            $this->login($controller);
+            $controller->handle('admin/settings');
+            $token = $this->csrfToken();
+
+            $_SERVER['REQUEST_METHOD'] = 'POST';
+            $_POST = [
+                'action' => 'save',
+                'tab' => 'delivery',
+                'smtp_host' => 'smtp.changed.example',
+                'csrf_token' => $token,
+            ];
+
+            $result = $controller->handle('admin/settings');
+
+            $this->assertSame(302, $result['status']);
+            $this->assertSame('/admin/settings?tab=delivery&saved=1', $result['redirect']);
+            $env = (string) file_get_contents($files['env']);
+            $this->assertStringContainsString("SMTP_HOST='smtp.changed.example'", $env);
+            $this->assertStringContainsString("APP_URL='https://forms.example.com'", $env);
+            $this->assertStringContainsString("IP_HASH_SECRET='1234567890123456'", $env);
+        } finally {
+            $this->removeSettingsFiles($files);
+        }
+    }
+
+    public function testIntegrationsPageSavesNotificationSettings(): void
+    {
+        $files = $this->settingsFiles();
+
+        try {
+            $controller = $this->makeController(
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+            $this->login($controller);
+
+            $page = $controller->handle('admin/integrations');
+            $this->assertSame(200, $page['status']);
+            $this->assertStringContainsString('Telegram', $page['body']);
+            $this->assertStringContainsString('Generic webhook', $page['body']);
+            $token = $this->csrfToken();
+
+            $_SERVER['REQUEST_METHOD'] = 'POST';
+            $_POST = [
+                'discord_webhook_url' => 'https://discord.com/api/webhooks/example',
+                'slack_webhook_url' => 'https://hooks.slack.com/services/example',
+                'generic_webhook_url' => 'https://hooks.example.com/formflow',
+                'telegram_bot_token' => '123456:telegram-token',
+                'telegram_chat_id' => '-1001234567890',
+                'csrf_token' => $token,
+            ];
+
+            $result = $controller->handle('admin/integrations');
+
+            $this->assertSame(302, $result['status']);
+            $this->assertSame('/admin/integrations?saved=1', $result['redirect']);
+            $env = (string) file_get_contents($files['env']);
+            $this->assertStringContainsString("DISCORD_WEBHOOK_URL='https://discord.com/api/webhooks/example'", $env);
+            $this->assertStringContainsString("GENERIC_WEBHOOK_URL='https://hooks.example.com/formflow'", $env);
+            $this->assertStringContainsString("TELEGRAM_CHAT_ID='-1001234567890'", $env);
         } finally {
             $this->removeSettingsFiles($files);
         }

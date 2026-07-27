@@ -8,7 +8,10 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
 {
     public function __construct(
         private readonly ?string $discordUrl,
-        private readonly ?string $slackUrl
+        private readonly ?string $slackUrl,
+        private readonly ?string $genericWebhookUrl = null,
+        private readonly ?string $telegramBotToken = null,
+        private readonly ?string $telegramChatId = null
     ) {
     }
 
@@ -22,6 +25,25 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
 
         if ($this->slackUrl !== null && $this->slackUrl !== '') {
             $this->postJson($this->slackUrl, ['text' => $summary]);
+        }
+
+        if ($this->genericWebhookUrl !== null && $this->genericWebhookUrl !== '') {
+            $this->postJson($this->genericWebhookUrl, [
+                'form_id' => $formId,
+                'fields' => $fields,
+            ]);
+        }
+
+        if (
+            $this->telegramBotToken !== null
+            && $this->telegramBotToken !== ''
+            && $this->telegramChatId !== null
+            && $this->telegramChatId !== ''
+        ) {
+            $this->postJson(
+                'https://api.telegram.org/bot' . rawurlencode($this->telegramBotToken) . '/sendMessage',
+                ['chat_id' => $this->telegramChatId, 'text' => $summary]
+            );
         }
     }
 

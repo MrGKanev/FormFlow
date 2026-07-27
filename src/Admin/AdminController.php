@@ -103,10 +103,6 @@ final class AdminController
             return $this->handleWhitelist();
         }
 
-        if ($path === 'admin/api-keys') {
-            return $this->handleApiKeys();
-        }
-
         if ($path === 'admin/forms') {
             return $this->handleForms();
         }
@@ -125,6 +121,10 @@ final class AdminController
 
         if ($path === 'admin/settings') {
             return $this->handleSettings();
+        }
+
+        if ($path === 'admin/integrations') {
+            return $this->handleIntegrations();
         }
 
         if ($path === 'admin/users') {
@@ -464,33 +464,13 @@ final class AdminController
         return $this->htmlResponse(200, $this->renderWhitelist(null));
     }
 
-    private function handleApiKeys(): array
-    {
-        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            if (!$this->verifyCsrfToken()) {
-                return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
-            }
-
-            $formId = (string) ($_POST['form_id'] ?? '');
-
-            if (!in_array($formId, array_keys($this->forms), true)) {
-                return $this->htmlResponse(422, '<h1>Unknown form id.</h1>');
-            }
-
-            $this->apiKeys->regenerate($formId);
-
-            return ['status' => 302, 'body' => '', 'redirect' => '/admin/api-keys'];
-        }
-
-        return $this->htmlResponse(200, $this->renderApiKeys());
-    }
-
     private function renderLogin(?string $error): string
     {
         return $this->render('login', [
             'error' => $error,
             'csrfToken' => $_SESSION['csrf_token'],
             'isLocal' => $this->canUseDevBypass(),
+            'containerClass' => 'auth-shell',
         ], 'Log in', withNav: false);
     }
 
@@ -502,22 +482,6 @@ final class AdminController
             'configuredIps' => $this->configuredIps,
             'csrfToken' => $_SESSION['csrf_token'],
         ], 'IP whitelist');
-    }
-
-    private function renderApiKeys(): string
-    {
-        $generated = $this->apiKeys->all();
-
-        $keys = [];
-
-        foreach (array_keys($this->forms) as $formId) {
-            $keys[$formId] = $generated[$formId] ?? null;
-        }
-
-        return $this->render('api-keys', [
-            'keys' => $keys,
-            'csrfToken' => $_SESSION['csrf_token'],
-        ], 'API keys');
     }
 
     private function handleForms(): array
@@ -540,7 +504,8 @@ final class AdminController
                 }
 
                 $this->formRepository->create($formId, $config);
-                $this->recordAudit('form.create', 'Created form "' . $formId . '".');
+                $this->apiKeys->regenerate($formId);
+                $this->recordAudit('form.create', 'Created form "' . $formId . '" with an API key.');
             } catch (InvalidArgumentException $exception) {
                 return $this->htmlResponse(422, $this->renderFormCreator($exception->getMessage(), $_POST));
             }
@@ -616,12 +581,15 @@ final class AdminController
 
     private function renderForms(?string $error, array $values): string
     {
+        $settings = $this->currentSettings();
+
         return $this->render('forms', [
             'error' => $error,
             'forms' => $this->forms,
             'dynamicFormIds' => array_keys($this->formRepository->all()),
             'apiKeys' => $this->apiKeys->all(),
-            'turnstileSiteKey' => (string) ($this->currentSettings()['turnstile_site_key'] ?? ''),
+            'appUrl' => trim((string) ($settings['app_url'] ?? '')),
+            'turnstileSiteKey' => (string) ($settings['turnstile_site_key'] ?? ''),
             'csrfToken' => $_SESSION['csrf_token'],
             'values' => $values,
         ], 'Forms');
@@ -648,6 +616,8 @@ final class AdminController
 
     private function handleSettings(): array
     {
+        $tab = $this->settingsTab((string) ($_POST['tab'] ?? $_GET['tab'] ?? 'general'));
+
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$this->verifyCsrfToken()) {
                 return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
@@ -660,7 +630,7 @@ final class AdminController
                 $deleted = $this->submissions->deleteOlderThan($days);
                 $this->recordAudit('retention.cleanup', 'Deleted ' . $deleted . ' submissions older than ' . $days . ' days.');
 
-                return $this->htmlResponse(200, $this->renderSettings(null, [], false, 'Deleted ' . $deleted . ' old submissions.'));
+                return $this->htmlResponse(200, $this->renderSettings(null, array_merge($_POST, ['tab' => $tab === 'general' ? 'maintenance' : $tab]), false, 'Deleted ' . $deleted . ' old submissions.'));
             }
 
             if ($action === 'generate_recovery') {
@@ -668,7 +638,7 @@ final class AdminController
                 $this->writeEnvFile(['RECOVERY_TOKEN_HASH' => password_hash($token, PASSWORD_DEFAULT)]);
                 $this->recordAudit('settings.recovery_token', 'Generated a recovery token.');
 
-                return $this->htmlResponse(200, $this->renderSettings(null, [], false, 'Recovery token: ' . $token));
+                return $this->htmlResponse(200, $this->renderSettings(null, array_merge($_POST, ['tab' => $tab === 'general' ? 'admin' : $tab]), false, 'Recovery token: ' . $token));
             }
 
             if ($action === 'generate_totp') {
@@ -676,27 +646,27 @@ final class AdminController
                 $this->writeEnvFile(['ADMIN_TOTP_SECRET' => $secret]);
                 $this->recordAudit('settings.totp', 'Generated bootstrap TOTP secret.');
 
-                return $this->htmlResponse(200, $this->renderSettings(null, array_merge($_POST, ['admin_totp_secret' => $secret]), false, 'TOTP secret generated.'));
+                return $this->htmlResponse(200, $this->renderSettings(null, array_merge($_POST, ['admin_totp_secret' => $secret, 'tab' => $tab === 'general' ? 'admin' : $tab]), false, 'TOTP secret generated.'));
             }
 
             if ($action === 'test_email') {
                 $message = $this->sendTestEmail((string) ($_POST['test_email_to'] ?? ''));
 
                 if (str_starts_with($message, 'Unable')) {
-                    return $this->htmlResponse(422, $this->renderSettings($message, $_POST, false));
+                    return $this->htmlResponse(422, $this->renderSettings($message, array_merge($_POST, ['tab' => $tab === 'general' ? 'delivery' : $tab]), false));
                 }
 
-                return $this->htmlResponse(200, $this->renderSettings(null, $_POST, false, $message));
+                return $this->htmlResponse(200, $this->renderSettings(null, array_merge($_POST, ['tab' => $tab === 'general' ? 'delivery' : $tab]), false, $message));
             }
 
             try {
-                $settings = $this->settingsFromPost($_POST);
+                $settings = $this->settingsFromPost(array_merge($this->currentSettings(), $_POST));
                 $this->writeSettings($settings);
             } catch (InvalidArgumentException $exception) {
                 return $this->htmlResponse(422, $this->renderSettings($exception->getMessage(), $_POST, false));
             }
 
-            return ['status' => 302, 'body' => '', 'redirect' => '/admin/settings?saved=1'];
+            return ['status' => 302, 'body' => '', 'redirect' => '/admin/settings?tab=' . rawurlencode($tab) . '&saved=1'];
         }
 
         return $this->htmlResponse(200, $this->renderSettings(null, [], ($_GET['saved'] ?? null) === '1'));
@@ -705,6 +675,7 @@ final class AdminController
     private function renderSettings(?string $error, array $values, bool $saved, ?string $notice = null): string
     {
         $settings = $values !== [] ? array_merge($this->currentSettings(), $values) : $this->currentSettings();
+        $activeTab = $this->settingsTab((string) ($values['tab'] ?? $_GET['tab'] ?? 'general'));
         $totpSecret = trim((string) ($settings['admin_totp_secret'] ?? ''));
         $totpUri = $totpSecret !== ''
             ? Totp::provisioningUri($totpSecret, (string) ($settings['admin_username'] ?? 'admin'))
@@ -715,11 +686,80 @@ final class AdminController
             'saved' => $saved,
             'notice' => $notice,
             'settings' => $settings,
+            'activeTab' => $activeTab,
             'totpQrSvg' => $totpUri !== '' ? Totp::qrSvg($totpUri) : null,
             'totpProvisioningUri' => $totpUri,
             'setupStatus' => $this->setupStatus(),
             'csrfToken' => $_SESSION['csrf_token'],
         ], 'Settings');
+    }
+
+    private function handleIntegrations(): array
+    {
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            if (!$this->verifyCsrfToken()) {
+                return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
+            }
+
+            try {
+                $this->writeEnvFile($this->integrationSettingsFromPost($_POST));
+                $this->recordAudit('integrations.update', 'Updated notification integrations.');
+            } catch (InvalidArgumentException $exception) {
+                return $this->htmlResponse(422, $this->renderIntegrations($exception->getMessage(), $_POST, false));
+            }
+
+            return ['status' => 302, 'body' => '', 'redirect' => '/admin/integrations?saved=1'];
+        }
+
+        return $this->htmlResponse(200, $this->renderIntegrations(null, [], ($_GET['saved'] ?? null) === '1'));
+    }
+
+    private function renderIntegrations(?string $error, array $values, bool $saved): string
+    {
+        return $this->render('integrations', [
+            'error' => $error,
+            'saved' => $saved,
+            'settings' => $values !== [] ? array_merge($this->currentSettings(), $values) : $this->currentSettings(),
+            'csrfToken' => $_SESSION['csrf_token'],
+        ], 'Integrations');
+    }
+
+    /** @param array<string, mixed> $input @return array<string, string> */
+    private function integrationSettingsFromPost(array $input): array
+    {
+        $fields = [
+            'discord_webhook_url' => 'DISCORD_WEBHOOK_URL',
+            'slack_webhook_url' => 'SLACK_WEBHOOK_URL',
+            'generic_webhook_url' => 'GENERIC_WEBHOOK_URL',
+            'telegram_bot_token' => 'TELEGRAM_BOT_TOKEN',
+            'telegram_chat_id' => 'TELEGRAM_CHAT_ID',
+        ];
+
+        $values = [];
+
+        foreach ($fields as $field => $envKey) {
+            $value = trim((string) ($input[$field] ?? ''));
+            $this->assertSafeEnvValue($field, $value);
+            $values[$envKey] = $value;
+        }
+
+        foreach (['discord_webhook_url', 'slack_webhook_url', 'generic_webhook_url'] as $field) {
+            $url = $values[$fields[$field]];
+
+            if ($url !== '' && !$this->isHttpUrl($url)) {
+                throw new InvalidArgumentException('Webhook URLs must be valid http or https URLs.');
+            }
+        }
+
+        return $values;
+    }
+
+    /** @return 'general'|'delivery'|'protection'|'admin'|'maintenance' */
+    private function settingsTab(string $tab): string
+    {
+        return in_array($tab, ['general', 'delivery', 'protection', 'admin', 'maintenance'], true)
+            ? $tab
+            : 'general';
     }
 
     /** @return array<string, mixed> */
@@ -743,6 +783,9 @@ final class AdminController
             'turnstile_site_key' => $env['TURNSTILE_SITE_KEY'] ?? (getenv('TURNSTILE_SITE_KEY') ?: ''),
             'discord_webhook_url' => $env['DISCORD_WEBHOOK_URL'] ?? (getenv('DISCORD_WEBHOOK_URL') ?: ''),
             'slack_webhook_url' => $env['SLACK_WEBHOOK_URL'] ?? (getenv('SLACK_WEBHOOK_URL') ?: ''),
+            'generic_webhook_url' => $env['GENERIC_WEBHOOK_URL'] ?? (getenv('GENERIC_WEBHOOK_URL') ?: ''),
+            'telegram_bot_token' => $env['TELEGRAM_BOT_TOKEN'] ?? (getenv('TELEGRAM_BOT_TOKEN') ?: ''),
+            'telegram_chat_id' => $env['TELEGRAM_CHAT_ID'] ?? (getenv('TELEGRAM_CHAT_ID') ?: ''),
             'database_path' => $env['DATABASE_PATH'] ?? (getenv('DATABASE_PATH') ?: 'storage/submissions.sqlite'),
             'ip_hash_secret' => $env['IP_HASH_SECRET'] ?? (getenv('IP_HASH_SECRET') ?: ''),
             'retention_days' => $env['RETENTION_DAYS'] ?? (getenv('RETENTION_DAYS') ?: '180'),
@@ -778,6 +821,9 @@ final class AdminController
             'turnstile_site_key',
             'discord_webhook_url',
             'slack_webhook_url',
+            'generic_webhook_url',
+            'telegram_bot_token',
+            'telegram_chat_id',
             'database_path',
             'ip_hash_secret',
             'retention_days',
@@ -795,7 +841,7 @@ final class AdminController
             throw new InvalidArgumentException('App URL must be a valid http or https URL.');
         }
 
-        foreach (['discord_webhook_url', 'slack_webhook_url'] as $urlField) {
+        foreach (['discord_webhook_url', 'slack_webhook_url', 'generic_webhook_url'] as $urlField) {
             $url = trim((string) ($input[$urlField] ?? ''));
 
             if ($url !== '' && !$this->isHttpUrl($url)) {
@@ -869,6 +915,9 @@ final class AdminController
                 'TURNSTILE_SITE_KEY' => trim((string) ($input['turnstile_site_key'] ?? '')),
                 'DISCORD_WEBHOOK_URL' => trim((string) ($input['discord_webhook_url'] ?? '')),
                 'SLACK_WEBHOOK_URL' => trim((string) ($input['slack_webhook_url'] ?? '')),
+                'GENERIC_WEBHOOK_URL' => trim((string) ($input['generic_webhook_url'] ?? '')),
+                'TELEGRAM_BOT_TOKEN' => trim((string) ($input['telegram_bot_token'] ?? '')),
+                'TELEGRAM_CHAT_ID' => trim((string) ($input['telegram_chat_id'] ?? '')),
                 'DATABASE_PATH' => $databasePath,
                 'IP_HASH_SECRET' => $ipHashSecret,
                 'RETENTION_DAYS' => (string) $retentionDays,

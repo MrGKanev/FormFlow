@@ -28,7 +28,7 @@ Edit `.env` with real SMTP/Turnstile data, or use `/admin/settings` after instal
 php -S localhost:8080 -t public
 ```
 
-`GET /` returns a short static home page with a description of the project and links to `/admin` and `/health`.
+`GET /` returns a short public home page with links to the GitHub repository and `/health`. The admin panel is intentionally shown there only for localhost development.
 
 Health check page:
 
@@ -44,6 +44,8 @@ curl -H "Accept: application/json" http://localhost:8080/health
 curl http://localhost:8080/health?format=json
 ```
 
+`/health` is a public liveness endpoint. It intentionally exposes only the service status and timestamp, not installation, database, mail, Turnstile, or PHP configuration details.
+
 Test submission (the `contact` form from `config/forms.php`):
 
 ```bash
@@ -55,7 +57,7 @@ curl -X POST http://localhost:8080/contact \
     -F "message=Test submission"
 ```
 
-If you have already generated an API key for `contact` from `/admin/api-keys`, also add `-F "_key=<the generated key>"` - otherwise submissions go through without it.
+If `contact` has an API key, also add `-F "_key=<the generated key>"`. Database-backed forms receive a key automatically when created; copy it from their integration snippet on `/admin/forms`.
 
 By default `contact` has `'turnstile' => true`, and the command above does not send `cf-turnstile-response` - expect `422 Turnstile validation failed`. For a local smoke test without a real Cloudflare token, temporarily change it to `'turnstile' => false` in `config/forms.php`, or send a valid token obtained from a real widget.
 
@@ -66,19 +68,19 @@ Minimal admin panel for reviewing submissions, protected with login + IP whiteli
 Routes:
 
 - `/admin` - dashboard with paginated submissions, search, date range filters, page size control, bulk actions, and form analytics.
-- `/admin/forms` - review configured forms and copy integration snippets.
+- `/admin/forms` - review configured forms and copy integration snippets. Snippets use `APP_URL`, so forms can submit from separate websites to one hosted FormFlow instance.
 - `/admin/forms/new` - create a new database-backed form endpoint.
 - `/admin/forms/{id}/edit` - edit an existing form, storing changes as a database-backed configuration.
 - `/admin/login` - login form.
 - `/admin/logout` - logout, redirect to `/admin/login`.
 - `/admin/submissions/{id}` - details for a specific submission, with review, resend, and delete actions.
-- `/admin/whitelist` - management of the IP whitelist for the admin panel (adding/removing IP/CIDR entries).
-- `/admin/api-keys` - generate/regenerate an API key per form.
+- `/admin/settings` - global configuration, organised into General, Delivery, Protection, Admin access, and Maintenance tabs.
+- `/admin/integrations` - notification integrations for Discord, Slack, Telegram, and generic webhooks.
+- `/admin/whitelist` - IP/CIDR access control for the admin panel, grouped under the Settings sub-navigation.
+- `/admin/users` - create/delete additional admin users, grouped under the Settings sub-navigation.
+- `/admin/audit` - recent admin actions, grouped under the Settings sub-navigation.
 - `/admin/delivery` - recent delivery states and failed-send errors.
 - `/admin/export` - CSV export of submissions, respecting dashboard search/date/status/form filters.
-- `/admin/settings` - edit runtime, SMTP delivery, retention, storage, login-rate-limit, admin-account, and global blocklist settings; send a test email; run retention cleanup.
-- `/admin/users` - create/delete additional admin users. Additional users are only managed from the admin panel.
-- `/admin/audit` - recent admin actions.
 - `/admin/backup` - download a SQLite database backup.
 - `/admin/config/export` and `/admin/config/import` - move settings/forms/security config as JSON.
 - `/admin/recovery?token=...` - one-time bootstrap password recovery path after generating a recovery token from settings.
@@ -98,10 +100,15 @@ vendor/bin/phpunit
 ## Configuration
 
 - Forms can be created from `/admin/forms`. Starter/static forms can also live in `config/forms.php`.
-- Per form: recipient, `allowed_origins`, `subject`, `success_redirect`, `turnstile`, `require_api_key`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`. Form endpoints accept all submitted user fields; system fields such as `_key`, `_website`, `cf-turnstile-response`, and `csrf_token` are not stored or emailed. API keys are generated from `/admin/api-keys`.
-- Global app settings can be edited from `/admin/settings`. It writes selected values to `.env`, login-rate-limit values to `config/admin.php`, and the global IP blocklist to `config/security.php`.
+- Per form: recipient, `allowed_origins`, `subject`, `success_redirect`, `turnstile`, `require_api_key`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`. Form endpoints accept all submitted user fields; system fields such as `_key`, `_website`, `cf-turnstile-response`, and `csrf_token` are not stored or emailed. A key is generated automatically with every new database-backed form and included in its integration snippet.
+- Global app settings can be edited from `/admin/settings`. It writes selected values to `.env`, login-rate-limit values to `config/admin.php`, and the global IP blocklist to `config/security.php`. Saving one Settings tab preserves values configured in the other tabs.
 - Mail can be configured with standard SMTP fields: `SMTP_HOST`, `SMTP_PORT`, `SMTP_ENCRYPTION` (`tls`, `ssl`, or `none`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM`, and `MAIL_FROM_NAME`. `MAILER_DSN` is still supported as an advanced override; when set, it takes precedence over the individual SMTP fields.
-- Discord and Slack notifications use `DISCORD_WEBHOOK_URL` and `SLACK_WEBHOOK_URL`.
+- Notification integrations are configured on `/admin/integrations`:
+  - Discord: `DISCORD_WEBHOOK_URL`
+  - Slack: `SLACK_WEBHOOK_URL`
+  - Telegram: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
+  - Generic webhook: `GENERIC_WEBHOOK_URL`; receives `{"form_id":"…","fields":{…}}`, which works with Zapier, Make, n8n, or a custom service.
+  Notifications are best-effort and never prevent a successfully stored submission from being accepted.
 - File uploads are accepted from multipart forms and stored under `storage/uploads`; payloads store the original filename plus local storage path.
 - Turnstile snippets use `TURNSTILE_SITE_KEY` when a form has Turnstile enabled.
 - Admin 2FA uses TOTP secrets (`ADMIN_TOTP_SECRET` for the bootstrap user, optional TOTP secret for DB-backed users).
@@ -109,7 +116,7 @@ vendor/bin/phpunit
 
 ## Protections
 
-Allowed origins/referer, honeypot field (`_website`), Cloudflare Turnstile, per-form API key (generated from `/admin/api-keys`, sent as a hidden field `_key`; forms may be configured to require a key), rate limiting by IP+form with a configurable window, daily cap on submissions per form, global IP blocklist, simple case-insensitive spam filter by keywords/phrases.
+Allowed origins/referer, honeypot field (`_website`), Cloudflare Turnstile, per-form API key (generated with each new form and sent as a hidden field `_key`), rate limiting by IP+form with a configurable window, daily cap on submissions per form, global IP blocklist, simple case-insensitive spam filter by keywords/phrases.
 
 **Reverse proxy:** The IP-based protections (rate limiting, IP blocklist, IP hash) read `REMOTE_ADDR` directly. Behind Cloudflare/nginx this is the proxy's IP, not the real client - set up `real_ip`/`CF-Connecting-IP` at the Nginx level, otherwise these protections do not work correctly.
 

@@ -4,7 +4,6 @@
 /** @var string $csrfToken */
 ?>
 <div class="auth-panel">
-<div class="auth-mark" aria-hidden="true"></div>
 <p class="page-kicker">formflow recovery</p>
 <h1>Reset admin password</h1>
 <?php if ($error !== null): ?>

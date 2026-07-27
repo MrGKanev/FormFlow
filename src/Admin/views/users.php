@@ -12,6 +12,8 @@
     </div>
 </div>
 
+<?php $settingsSection = 'users'; require __DIR__ . '/_settings-nav.php'; ?>
+
 <?php if ($error !== null): ?>
     <p class="banner error"><?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?></p>
 <?php endif; ?>

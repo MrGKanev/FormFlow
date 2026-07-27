@@ -9,6 +9,8 @@
     </div>
 </div>
 
+<?php $settingsSection = 'audit'; require __DIR__ . '/_settings-nav.php'; ?>
+
 <div class="table-wrap">
     <table>
         <thead>

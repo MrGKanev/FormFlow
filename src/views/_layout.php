@@ -11,17 +11,17 @@ $bodyClass = $withNav ? 'with-nav' : 'without-nav';
 $navItems = [
     '/admin' => 'Submissions',
     '/admin/forms' => 'Forms',
-    '/admin/api-keys' => 'API keys',
     '/admin/delivery' => 'Delivery',
-    '/admin/whitelist' => 'IP whitelist',
     '/admin/settings' => 'Settings',
-    '/admin/users' => 'Users',
-    '/admin/audit' => 'Audit',
 ];
 
 $isActive = static function (string $href) use ($currentPath): bool {
     if ($href === '/admin') {
         return $currentPath === '/admin' || str_starts_with($currentPath, '/admin/submissions/');
+    }
+
+    if ($href === '/admin/settings') {
+        return in_array($currentPath, ['/admin/settings', '/admin/integrations', '/admin/whitelist', '/admin/users', '/admin/audit'], true);
     }
 
     return $currentPath === $href || str_starts_with($currentPath, $href . '/');

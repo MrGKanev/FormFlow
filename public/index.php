@@ -77,83 +77,8 @@ function mailerDsnFromEnv(): string
     return sprintf('%s://%s%s:%d%s', $scheme, $auth, $host, $port, $query);
 }
 
-function healthChecks(string $root, bool $envExists): array
-{
-    $databasePath = databasePath($root);
-    $databaseDirectory = dirname($databasePath);
-    $requiredExtensions = ['curl', 'mbstring', 'pdo_sqlite'];
-    $checks = [];
-
-    $checks[] = [
-        'label' => 'Installation',
-        'detail' => $envExists ? '.env found' : 'setup required',
-        'ok' => $envExists,
-        'status' => $envExists ? 'good' : 'warn',
-    ];
-
-    foreach ($requiredExtensions as $extension) {
-        $loaded = extension_loaded($extension);
-        $checks[] = [
-            'label' => 'PHP extension: ' . $extension,
-            'detail' => $loaded ? 'loaded' : 'not loaded',
-            'ok' => $loaded,
-            'status' => $loaded ? 'good' : 'danger',
-        ];
-    }
-
-    $databaseReady = is_file($databasePath)
-        ? is_readable($databasePath) && is_writable($databasePath)
-        : is_dir($databaseDirectory) && is_writable($databaseDirectory);
-
-    $checks[] = [
-        'label' => 'Database',
-        'detail' => $databaseReady ? 'storage ready' : 'database storage is not writable',
-        'ok' => $databaseReady,
-        'status' => $databaseReady ? 'good' : 'danger',
-    ];
-
-    $mailReady = ((getenv('MAILER_DSN') ?: '') !== '' || (getenv('SMTP_HOST') ?: '') !== '')
-        && (getenv('MAIL_FROM') ?: '') !== '';
-    $checks[] = [
-        'label' => 'Mail delivery',
-        'detail' => $mailReady ? 'configured' : 'missing SMTP settings or sender',
-        'ok' => $mailReady,
-        'status' => $mailReady ? 'good' : 'warn',
-    ];
-
-    $turnstileReady = (getenv('TURNSTILE_SECRET') ?: '') !== '';
-    $checks[] = [
-        'label' => 'Turnstile',
-        'detail' => $turnstileReady ? 'configured' : 'not configured',
-        'ok' => true,
-        'status' => $turnstileReady ? 'good' : 'warn',
-    ];
-
-    return $checks;
-}
-
 function renderHealthPage(array $health): string
 {
-    $overallClass = $health['ok'] ? 'good' : 'danger';
-    $overallText = $health['ok'] ? 'Operational' : 'Needs attention';
-    $checksHtml = '';
-
-    foreach ($health['checks'] as $check) {
-        $badgeText = match ($check['status']) {
-            'good' => 'OK',
-            'warn' => 'Check',
-            default => 'Fail',
-        };
-
-        $checksHtml .= sprintf(
-            '<article class="health-card"><div class="section-heading"><h2>%s</h2><span class="badge %s">%s</span></div><p>%s</p></article>',
-            htmlspecialchars((string) $check['label'], ENT_QUOTES, 'UTF-8'),
-            htmlspecialchars((string) $check['status'], ENT_QUOTES, 'UTF-8'),
-            $badgeText,
-            htmlspecialchars((string) $check['detail'], ENT_QUOTES, 'UTF-8')
-        );
-    }
-
     return <<<HTML
     <!DOCTYPE html>
     <html lang="en" data-theme="light">
@@ -183,7 +108,7 @@ function renderHealthPage(array $health): string
             <div>
                 <p class="page-kicker">Public status</p>
                 <h1>Health check</h1>
-                <p class="page-meta">Current service readiness for formflow.</p>
+                <p class="page-meta">A public liveness check for formflow.</p>
             </div>
         </div>
 
@@ -192,12 +117,8 @@ function renderHealthPage(array $health): string
                 <h2>Service status</h2>
                 <p class="page-meta">Checked at <time datetime="{$health['time']}">{$health['time']}</time></p>
             </div>
-            <span class="badge {$overallClass}">{$overallText}</span>
+            <span class="badge good">Available</span>
         </section>
-
-        <div class="health-grid">
-            {$checksHtml}
-        </div>
     </main>
     </body>
     </html>
@@ -283,13 +204,14 @@ if ($formId === '') {
     }
 
     echo <<<'HTML'
+                <a href="https://github.com/MrGKanev/FormFlow" class="button secondary" target="_blank" rel="noopener noreferrer">GitHub</a>
                 <a href="/health" class="button secondary">Health check</a>
             </div>
         </section>
         <ul class="features">
             <li><strong>Spam control</strong>Turnstile, honeypot checks, keyword filtering, and a global IP blocklist.</li>
             <li><strong>Rate limits</strong>Per-IP and per-form limits keep noisy forms contained.</li>
-            <li><strong>Admin workflow</strong>Review submissions and rotate a <code>_key</code> for each configured form.</li>
+            <li><strong>Admin workflow</strong>Review submissions and copy each form's ready-to-use integration snippet.</li>
         </ul>
     </main>
     </body>
@@ -300,14 +222,10 @@ if ($formId === '') {
 }
 
 if ($formId === 'health') {
-    $checks = healthChecks($root, $envExists);
     $health = [
-        'status' => in_array(false, array_column($checks, 'ok'), true) ? 'needs_attention' : 'ok',
-        'ok' => !in_array(false, array_column($checks, 'ok'), true),
+        'status' => 'ok',
         'service' => 'formflow',
-        'environment' => getenv('APP_ENV') ?: 'production',
         'time' => gmdate('c'),
-        'checks' => $checks,
     ];
 
     if (wantsJsonResponse()) {
@@ -418,7 +336,10 @@ try {
         new SqliteFormApiKeyRepository($databasePath),
         new CurlWebhookNotifier(
             getenv('DISCORD_WEBHOOK_URL') ?: null,
-            getenv('SLACK_WEBHOOK_URL') ?: null
+            getenv('SLACK_WEBHOOK_URL') ?: null,
+            getenv('GENERIC_WEBHOOK_URL') ?: null,
+            getenv('TELEGRAM_BOT_TOKEN') ?: null,
+            getenv('TELEGRAM_CHAT_ID') ?: null
         ),
         $root . '/storage/uploads'
     );
