@@ -249,6 +249,34 @@ final class FormHandler
             'allowed_extensions' => [],
         ], $policy);
 
+        $entries = $this->uploadedFileEntries($files);
+        $acceptedEntries = [];
+
+        foreach ($entries as $field => $file) {
+            if ($file['error'] === UPLOAD_ERR_NO_FILE) {
+                continue;
+            }
+
+            $this->validateUploadedFile($field, $file, $policy);
+            $acceptedEntries[$field] = $file;
+        }
+
+        if (count($acceptedEntries) > (int) $policy['max_files']) {
+            throw new InvalidArgumentException('Too many files were uploaded.');
+        }
+
+        foreach ($acceptedEntries as $field => $file) {
+            $this->storeUploadedFile($field, $file, $stored);
+        }
+
+        return $stored;
+    }
+
+    /** @return array<string, array{name: string, tmp_name: string, error: int, size: int}> */
+    private function uploadedFileEntries(array $files): array
+    {
+        $entries = [];
+
         foreach ($files as $field => $file) {
             if (!is_array($file) || !isset($file['error'])) {
                 continue;
@@ -256,42 +284,33 @@ final class FormHandler
 
             if (is_array($file['error'])) {
                 foreach ($file['error'] as $index => $error) {
-                    $entry = [
+                    $entries[(string) $field . '_' . (int) $index] = [
                         'name' => (string) ($file['name'][$index] ?? ''),
                         'tmp_name' => (string) ($file['tmp_name'][$index] ?? ''),
                         'error' => (int) $error,
                         'size' => (int) ($file['size'][$index] ?? 0),
                     ];
-                    $this->storeUploadedFile((string) $field . '_' . (int) $index, $entry, $stored, $policy);
                 }
 
                 continue;
             }
 
-            $this->storeUploadedFile((string) $field, [
+            $entries[(string) $field] = [
                 'name' => (string) ($file['name'] ?? ''),
                 'tmp_name' => (string) ($file['tmp_name'] ?? ''),
                 'error' => (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE),
                 'size' => (int) ($file['size'] ?? 0),
-            ], $stored, $policy);
+            ];
         }
 
-        return $stored;
+        return $entries;
     }
 
-    /** @param array{name: string, tmp_name: string, error: int, size: int} $file @param array<string, string> $stored @param array<string, mixed> $policy */
-    private function storeUploadedFile(string $field, array $file, array &$stored, array $policy): void
+    /** @param array{name: string, tmp_name: string, error: int, size: int} $file @param array<string, mixed> $policy */
+    private function validateUploadedFile(string $field, array $file, array $policy): void
     {
-        if ($file['error'] === UPLOAD_ERR_NO_FILE) {
-            return;
-        }
-
         if ($file['error'] !== UPLOAD_ERR_OK) {
             throw new InvalidArgumentException(sprintf('Upload "%s" failed.', $field));
-        }
-
-        if (count($stored) >= (int) $policy['max_files']) {
-            throw new InvalidArgumentException('Too many files were uploaded.');
         }
 
         if ($file['size'] > (int) $policy['max_file_size_mb'] * 1024 * 1024) {
@@ -304,6 +323,11 @@ final class FormHandler
         if (is_array($allowedExtensions) && $allowedExtensions !== [] && !in_array($extension, $allowedExtensions, true)) {
             throw new InvalidArgumentException(sprintf('Upload "%s" has an unsupported file type.', $field));
         }
+    }
+
+    /** @param array{name: string, tmp_name: string, error: int, size: int} $file @param array<string, string> $stored */
+    private function storeUploadedFile(string $field, array $file, array &$stored): void
+    {
 
         $safeName = preg_replace('/[^A-Za-z0-9._-]+/', '-', basename($file['name'])) ?: 'upload.bin';
         $target = rtrim($this->uploadDirectory, '/') . '/' . gmdate('YmdHis') . '-' . bin2hex(random_bytes(6)) . '-' . $safeName;
