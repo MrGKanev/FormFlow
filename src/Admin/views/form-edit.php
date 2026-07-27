@@ -8,6 +8,9 @@ $value = static fn (string $key, string $default = ''): string => htmlspecialcha
     ENT_QUOTES,
     'UTF-8'
 );
+$notificationChannels = is_array($values['notification_channels'] ?? null)
+    ? $values['notification_channels']
+    : ['discord', 'slack', 'telegram', 'generic'];
 ?>
 <div class="page-header">
     <div>
@@ -67,6 +70,28 @@ $value = static fn (string $key, string $default = ''): string => htmlspecialcha
             <span>Blocked patterns</span>
             <textarea name="blocked_patterns" rows="3"><?= $value('blocked_patterns') ?></textarea>
         </label>
+        <label>
+            <span>Max upload size (MB)</span>
+            <input type="number" name="upload_max_file_size_mb" min="1" max="100" value="<?= $value('upload_max_file_size_mb', '10') ?>">
+        </label>
+        <label>
+            <span>Max uploaded files</span>
+            <input type="number" name="upload_max_files" min="1" max="20" value="<?= $value('upload_max_files', '3') ?>">
+        </label>
+        <label class="span-2">
+            <span>Allowed file extensions</span>
+            <textarea name="upload_allowed_extensions" rows="3"><?= $value('upload_allowed_extensions') ?></textarea>
+        </label>
+        <fieldset class="field-picker span-2">
+            <legend>Send notifications to</legend>
+            <p class="muted">Only enabled integrations are used. Configure their endpoints in Settings → Integrations.</p>
+            <?php foreach (['discord' => 'Discord', 'slack' => 'Slack', 'telegram' => 'Telegram', 'generic' => 'Generic webhook'] as $channel => $label): ?>
+                <label class="checkbox-label option-check">
+                    <input type="checkbox" name="notification_channels[]" value="<?= $channel ?>"<?= in_array($channel, $notificationChannels, true) ? ' checked' : '' ?>>
+                    <span><?= $label ?></span>
+                </label>
+            <?php endforeach; ?>
+        </fieldset>
     </div>
     <div class="form-actions">
         <button type="submit">Save form</button>

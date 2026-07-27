@@ -24,6 +24,7 @@ final class FormHandlerTest extends TestCase
         $_SERVER['REMOTE_ADDR'] = '198.51.100.10';
         unset($_SERVER['HTTP_REFERER']);
         $_POST = [];
+        $_FILES = [];
     }
 
     protected function tearDown(): void
@@ -35,6 +36,7 @@ final class FormHandlerTest extends TestCase
             $_SERVER['REMOTE_ADDR']
         );
         $_POST = [];
+        $_FILES = [];
     }
 
     /** @param array<string, mixed> $overrides */
@@ -55,7 +57,8 @@ final class FormHandlerTest extends TestCase
         ?FakeTurnstileVerifier $turnstile = null,
         ?SqliteSubmissionRepository $repository = null,
         ?SqliteRateLimiter $rateLimiter = null,
-        ?FormApiKeyRepositoryInterface $apiKeys = null
+        ?FormApiKeyRepositoryInterface $apiKeys = null,
+        string $uploadDirectory = ''
     ): FormHandler {
         return new FormHandler(
             $forms,
@@ -64,8 +67,43 @@ final class FormHandlerTest extends TestCase
             $turnstile ?? new FakeTurnstileVerifier(true),
             $rateLimiter ?? new SqliteRateLimiter(':memory:'),
             'test-secret',
-            $apiKeys ?? new SqliteFormApiKeyRepository(':memory:')
+            $apiKeys ?? new SqliteFormApiKeyRepository(':memory:'),
+            null,
+            $uploadDirectory
         );
+    }
+
+    public function testUploadPolicyRejectsDisallowedFileExtension(): void
+    {
+        $directory = sys_get_temp_dir() . '/formflow-upload-' . bin2hex(random_bytes(6));
+        $_POST = ['email' => 'ada@example.com'];
+        $_FILES = [
+            'attachment' => [
+                'name' => 'payload.exe',
+                'tmp_name' => '',
+                'error' => UPLOAD_ERR_OK,
+                'size' => 1,
+            ],
+        ];
+        $handler = $this->makeHandler([
+            'contact' => $this->contactForm([
+                'uploads' => [
+                    'max_file_size_mb' => 2,
+                    'max_files' => 1,
+                    'allowed_extensions' => ['pdf'],
+                ],
+            ]),
+        ], uploadDirectory: $directory);
+
+        try {
+            $this->expectException(InvalidArgumentException::class);
+            $this->expectExceptionMessage('unsupported file type');
+            $handler->handle('contact');
+        } finally {
+            if (is_dir($directory)) {
+                rmdir($directory);
+            }
+        }
     }
 
     public function testUnknownFormReturns404(): void

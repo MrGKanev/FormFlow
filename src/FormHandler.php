@@ -93,7 +93,10 @@ final class FormHandler
             ];
         }
 
-        $fields = array_merge($this->extractFields($_POST), $this->extractUploadedFiles($_FILES ?? []));
+        $fields = array_merge(
+            $this->extractFields($_POST),
+            $this->extractUploadedFiles($_FILES ?? [], $config['uploads'] ?? [])
+        );
 
         $this->validateEmailField($fields);
 
@@ -137,7 +140,10 @@ final class FormHandler
         }
 
         try {
-            $this->webhookNotifier?->notify($formId, $fields);
+            $channels = array_key_exists('notification_channels', $config)
+                ? (array) $config['notification_channels']
+                : null;
+            $this->webhookNotifier?->notify($formId, $fields, $channels);
         } catch (Throwable) {
         }
 
@@ -226,7 +232,7 @@ final class FormHandler
     }
 
     /** @return array<string, string> */
-    private function extractUploadedFiles(array $files): array
+    private function extractUploadedFiles(array $files, array $policy): array
     {
         if ($files === [] || $this->uploadDirectory === '') {
             return [];
@@ -237,6 +243,11 @@ final class FormHandler
         }
 
         $stored = [];
+        $policy = array_merge([
+            'max_file_size_mb' => 10,
+            'max_files' => 3,
+            'allowed_extensions' => [],
+        ], $policy);
 
         foreach ($files as $field => $file) {
             if (!is_array($file) || !isset($file['error'])) {
@@ -251,7 +262,7 @@ final class FormHandler
                         'error' => (int) $error,
                         'size' => (int) ($file['size'][$index] ?? 0),
                     ];
-                    $this->storeUploadedFile((string) $field . '_' . (int) $index, $entry, $stored);
+                    $this->storeUploadedFile((string) $field . '_' . (int) $index, $entry, $stored, $policy);
                 }
 
                 continue;
@@ -262,14 +273,14 @@ final class FormHandler
                 'tmp_name' => (string) ($file['tmp_name'] ?? ''),
                 'error' => (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE),
                 'size' => (int) ($file['size'] ?? 0),
-            ], $stored);
+            ], $stored, $policy);
         }
 
         return $stored;
     }
 
-    /** @param array{name: string, tmp_name: string, error: int, size: int} $file @param array<string, string> $stored */
-    private function storeUploadedFile(string $field, array $file, array &$stored): void
+    /** @param array{name: string, tmp_name: string, error: int, size: int} $file @param array<string, string> $stored @param array<string, mixed> $policy */
+    private function storeUploadedFile(string $field, array $file, array &$stored, array $policy): void
     {
         if ($file['error'] === UPLOAD_ERR_NO_FILE) {
             return;
@@ -279,8 +290,19 @@ final class FormHandler
             throw new InvalidArgumentException(sprintf('Upload "%s" failed.', $field));
         }
 
-        if ($file['size'] > 10 * 1024 * 1024) {
+        if (count($stored) >= (int) $policy['max_files']) {
+            throw new InvalidArgumentException('Too many files were uploaded.');
+        }
+
+        if ($file['size'] > (int) $policy['max_file_size_mb'] * 1024 * 1024) {
             throw new InvalidArgumentException(sprintf('Upload "%s" is too large.', $field));
+        }
+
+        $extension = strtolower((string) pathinfo($file['name'], PATHINFO_EXTENSION));
+        $allowedExtensions = $policy['allowed_extensions'];
+
+        if (is_array($allowedExtensions) && $allowedExtensions !== [] && !in_array($extension, $allowedExtensions, true)) {
+            throw new InvalidArgumentException(sprintf('Upload "%s" has an unsupported file type.', $field));
         }
 
         $safeName = preg_replace('/[^A-Za-z0-9._-]+/', '-', basename($file['name'])) ?: 'upload.bin';

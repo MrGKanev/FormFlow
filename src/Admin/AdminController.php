@@ -14,6 +14,7 @@ use formflow\FormConfigRepositoryInterface;
 use formflow\MailSenderInterface;
 use formflow\SubmissionRepositoryInterface;
 use formflow\Totp;
+use formflow\WebhookDeliveryRepositoryInterface;
 use InvalidArgumentException;
 use Throwable;
 
@@ -37,7 +38,8 @@ final class AdminController
         private readonly ?string $securityConfigPath = null,
         private readonly ?AdminUserRepositoryInterface $adminUsers = null,
         private readonly ?AuditLogRepositoryInterface $auditLog = null,
-        private readonly ?MailSenderInterface $mailSender = null
+        private readonly ?MailSenderInterface $mailSender = null,
+        private readonly ?WebhookDeliveryRepositoryInterface $webhookDeliveries = null
     ) {
     }
 
@@ -430,6 +432,7 @@ final class AdminController
     {
         return $this->htmlResponse(200, $this->render('delivery', [
             'entries' => $this->submissions->deliveryLog(),
+            'webhookEntries' => $this->webhookDeliveries?->deliveryLog() ?? [],
         ], 'Delivery log'));
     }
 
@@ -1458,9 +1461,37 @@ final class AdminController
 
         $blockedPatterns = $this->lines((string) ($input['blocked_patterns'] ?? ''));
 
+        $allowedExtensions = array_map(
+            static fn (string $extension): string => strtolower(ltrim($extension, '.')),
+            $this->lines((string) ($input['upload_allowed_extensions'] ?? ''))
+        );
+
+        foreach ($allowedExtensions as $extension) {
+            if (!preg_match('/^[a-z0-9]{1,16}$/', $extension)) {
+                throw new InvalidArgumentException('Allowed file extensions must contain only letters and numbers.');
+            }
+        }
+
+        $uploads = [
+            'max_file_size_mb' => min(100, max(1, (int) ($input['upload_max_file_size_mb'] ?? 10))),
+            'max_files' => min(20, max(1, (int) ($input['upload_max_files'] ?? 3))),
+            'allowed_extensions' => array_values(array_unique($allowedExtensions)),
+        ];
+
+        $notificationChannels = is_array($input['notification_channels'] ?? null)
+            ? $input['notification_channels']
+            : [];
+        $allowedChannels = ['discord', 'slack', 'telegram', 'generic'];
+        $config['notification_channels'] = array_values(array_unique(array_filter(
+            array_map(static fn (mixed $channel): string => (string) $channel, $notificationChannels),
+            static fn (string $channel): bool => in_array($channel, $allowedChannels, true)
+        )));
+
         if ($blockedPatterns !== []) {
             $config['blocked_patterns'] = $blockedPatterns;
         }
+
+        $config['uploads'] = $uploads;
 
         return [$formId, $config];
     }
@@ -1480,6 +1511,10 @@ final class AdminController
             'turnstile' => !empty($config['turnstile']) ? '1' : '',
             'require_api_key' => !empty($config['require_api_key']) ? '1' : '',
             'blocked_patterns' => implode(PHP_EOL, $config['blocked_patterns'] ?? []),
+            'upload_max_file_size_mb' => (string) (int) ($config['uploads']['max_file_size_mb'] ?? 10),
+            'upload_max_files' => (string) (int) ($config['uploads']['max_files'] ?? 3),
+            'upload_allowed_extensions' => implode(PHP_EOL, $config['uploads']['allowed_extensions'] ?? []),
+            'notification_channels' => $config['notification_channels'] ?? ['discord', 'slack', 'telegram', 'generic'],
         ];
     }
 

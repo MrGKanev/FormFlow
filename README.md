@@ -79,7 +79,7 @@ Routes:
 - `/admin/whitelist` - IP/CIDR access control for the admin panel, grouped under the Settings sub-navigation.
 - `/admin/users` - create/delete additional admin users, grouped under the Settings sub-navigation.
 - `/admin/audit` - recent admin actions, grouped under the Settings sub-navigation.
-- `/admin/delivery` - recent delivery states and failed-send errors.
+- `/admin/delivery` - email and integration delivery logs, including webhook retry attempts and failures.
 - `/admin/export` - CSV export of submissions, respecting dashboard search/date/status/form filters.
 - `/admin/backup` - download a SQLite database backup.
 - `/admin/config/export` and `/admin/config/import` - move settings/forms/security config as JSON.
@@ -100,7 +100,7 @@ vendor/bin/phpunit
 ## Configuration
 
 - Forms can be created from `/admin/forms`. Starter/static forms can also live in `config/forms.php`.
-- Per form: recipient, `allowed_origins`, `subject`, `success_redirect`, `turnstile`, `require_api_key`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`. Form endpoints accept all submitted user fields; system fields such as `_key`, `_website`, `cf-turnstile-response`, and `csrf_token` are not stored or emailed. A key is generated automatically with every new database-backed form and included in its integration snippet.
+- Per form: recipient, `allowed_origins`, `subject`, `success_redirect`, `turnstile`, `require_api_key`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`, upload limits, and selected notification channels. Upload rules support a size limit (1–100 MB), file-count limit (1–20), and an optional allow-list of filename extensions. Form endpoints accept all submitted user fields; system fields such as `_key`, `_website`, `cf-turnstile-response`, and `csrf_token` are not stored or emailed. A key is generated automatically with every new database-backed form and included in its integration snippet.
 - Global app settings can be edited from `/admin/settings`. It writes selected values to `.env`, login-rate-limit values to `config/admin.php`, and the global IP blocklist to `config/security.php`. Saving one Settings tab preserves values configured in the other tabs.
 - Mail can be configured with standard SMTP fields: `SMTP_HOST`, `SMTP_PORT`, `SMTP_ENCRYPTION` (`tls`, `ssl`, or `none`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM`, and `MAIL_FROM_NAME`. `MAILER_DSN` is still supported as an advanced override; when set, it takes precedence over the individual SMTP fields.
 - Notification integrations are configured on `/admin/integrations`:
@@ -108,8 +108,8 @@ vendor/bin/phpunit
   - Slack: `SLACK_WEBHOOK_URL`
   - Telegram: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
   - Generic webhook: `GENERIC_WEBHOOK_URL`; receives `{"form_id":"…","fields":{…}}`, which works with Zapier, Make, n8n, or a custom service.
-  Notifications are best-effort and never prevent a successfully stored submission from being accepted.
-- File uploads are accepted from multipart forms and stored under `storage/uploads`; payloads store the original filename plus local storage path.
+  Each form selects which of these configured channels receive its submissions; existing forms without a saved selection keep using all configured channels. Every webhook delivery is attempted up to three times and the final result is visible in `/admin/delivery`. Notifications never prevent a successfully stored submission from being accepted.
+- File uploads are accepted from multipart forms and stored under `storage/uploads`; payloads store the original filename plus local storage path. Configure per-form size, count, and extension rules before exposing an upload field in the form markup.
 - Turnstile snippets use `TURNSTILE_SITE_KEY` when a form has Turnstile enabled.
 - Admin 2FA uses TOTP secrets (`ADMIN_TOTP_SECRET` for the bootstrap user, optional TOTP secret for DB-backed users).
 - `config/security.php` - global IP blocklist (exact IP addresses or IPv4 CIDR ranges).

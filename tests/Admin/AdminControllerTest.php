@@ -530,6 +530,10 @@ final class AdminControllerTest extends TestCase
             'daily_limit' => '50',
             'turnstile' => '1',
             'blocked_patterns' => "viagra\n<a href=",
+            'upload_max_file_size_mb' => '6',
+            'upload_max_files' => '2',
+            'upload_allowed_extensions' => "pdf\nJPG",
+            'notification_channels' => ['slack', 'generic'],
             'csrf_token' => $token,
         ];
 
@@ -544,6 +548,12 @@ final class AdminControllerTest extends TestCase
         $this->assertArrayNotHasKey('allowed_fields', $forms['newsletter']);
         $this->assertArrayNotHasKey('required_fields', $forms['newsletter']);
         $this->assertSame(['max' => 3, 'window_minutes' => 15], $forms['newsletter']['rate_limit_per_ip']);
+        $this->assertSame([
+            'max_file_size_mb' => 6,
+            'max_files' => 2,
+            'allowed_extensions' => ['pdf', 'jpg'],
+        ], $forms['newsletter']['uploads']);
+        $this->assertSame(['slack', 'generic'], $forms['newsletter']['notification_channels']);
         $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', (string) $apiKeys->get('newsletter'));
     }
 

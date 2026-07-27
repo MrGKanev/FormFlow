@@ -6,6 +6,7 @@ use formflow\Admin\AdminController;
 use formflow\AdminAuth;
 use formflow\AdminIpWhitelist;
 use formflow\CurlWebhookNotifier;
+use formflow\SqliteWebhookDeliveryRepository;
 use formflow\FormHandler;
 use formflow\Install\InstallController;
 use formflow\IpBlocklist;
@@ -253,6 +254,7 @@ if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
     $whitelistRepository = new SqliteAdminWhitelistRepository($databasePath);
     $adminUsers = new SqliteAdminUserRepository($databasePath);
     $auditLog = new SqliteAuditLogRepository($databasePath);
+    $webhookDeliveries = new SqliteWebhookDeliveryRepository($databasePath);
     $mailService = new MailService(
         mailerDsnFromEnv(),
         getenv('MAIL_FROM') ?: '',
@@ -283,7 +285,8 @@ if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
         $root . '/config/security.php',
         $adminUsers,
         $auditLog,
-        $mailService
+        $mailService,
+        $webhookDeliveries
     );
 
     $result = $adminController->handle($formId);
@@ -339,7 +342,8 @@ try {
             getenv('SLACK_WEBHOOK_URL') ?: null,
             getenv('GENERIC_WEBHOOK_URL') ?: null,
             getenv('TELEGRAM_BOT_TOKEN') ?: null,
-            getenv('TELEGRAM_CHAT_ID') ?: null
+            getenv('TELEGRAM_CHAT_ID') ?: null,
+            new SqliteWebhookDeliveryRepository($databasePath)
         ),
         $root . '/storage/uploads'
     );
