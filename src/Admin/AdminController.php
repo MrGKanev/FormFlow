@@ -212,6 +212,7 @@ final class AdminController
             'dateFrom' => $dateFrom,
             'dateTo' => $dateTo,
             'analytics' => $this->submissions->analytics(),
+            'containerClass' => 'admin-wide',
         ], 'Submissions'));
     }
 

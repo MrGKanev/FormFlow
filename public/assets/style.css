@@ -104,6 +104,10 @@ a:hover {
     padding: 32px 0 56px;
 }
 
+.container.admin-wide {
+    width: min(1200px, calc(100% - 32px));
+}
+
 .container.narrow {
     width: min(440px, calc(100% - 32px));
     padding-top: 64px;
@@ -534,29 +538,25 @@ select:focus {
 
 .filter-form {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: minmax(220px, 1.4fr) minmax(130px, 0.8fr) minmax(150px, 0.85fr) repeat(2, minmax(130px, 0.75fr)) minmax(110px, 0.6fr);
     gap: 14px;
     align-items: end;
 }
 
-.filter-field {
+.filter-form label {
     min-width: 0;
-    padding: 10px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
     margin-bottom: 0;
-    background: var(--surface-2);
 }
 
-.filter-field span {
+.filter-form label span {
     color: var(--muted);
     font-size: 0.78rem;
     font-weight: 760;
     text-transform: uppercase;
 }
 
-.filter-field input,
-.filter-field select {
+.filter-form input,
+.filter-form select {
     min-height: 40px;
     margin-top: 0.35rem;
     border-color: var(--border);
@@ -631,6 +631,35 @@ button.secondary:hover,
 .table-wrap.embedded {
     margin-bottom: 0;
     box-shadow: none;
+}
+
+.submissions-table {
+    margin-bottom: 0.85rem;
+}
+
+.table-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: 0.9rem;
+    font-weight: 650;
+}
+
+.table-toolbar .form-actions {
+    flex-wrap: nowrap;
+    margin-top: 0;
+}
+
+.table-toolbar select {
+    width: auto;
+    min-width: 160px;
+    margin-top: 0;
+    background: var(--surface);
 }
 
 table {
@@ -1129,6 +1158,15 @@ ul.features li strong {
         grid-column: auto;
     }
 
+    .table-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .table-toolbar .form-actions {
+        flex-wrap: wrap;
+    }
+
     .home-hero h1 {
         font-size: 2.4rem;
     }
@@ -1141,7 +1179,8 @@ ul.features li strong {
 @media (max-width: 460px) {
     .container,
     .container.narrow,
-    .container.setup {
+    .container.setup,
+    .container.admin-wide {
         width: min(100% - 24px, 1120px);
         padding-top: 24px;
     }

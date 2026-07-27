@@ -65,7 +65,7 @@ $exportQuery = http_build_query([
 
 <div class="dashboard-summary">
     <div class="stat-card">
-        <p class="stat-label">Total</p>
+        <p class="stat-label">Total submissions</p>
         <p class="stat-value"><?= number_format($total) ?></p>
     </div>
     <div class="stat-card">
@@ -79,15 +79,15 @@ $exportQuery = http_build_query([
 </div>
 
 <form method="GET" action="/admin" class="filter-form">
-    <label class="filter-field">
+    <label>
         <span>Search</span>
         <input type="search" name="q" placeholder="email, name, message, error" value="<?= htmlspecialchars((string) $search, ENT_QUOTES, 'UTF-8') ?>">
     </label>
-    <label class="filter-field">
+    <label>
         <span>Form ID</span>
         <input type="text" name="form_id" placeholder="contact" value="<?= htmlspecialchars((string) $formId, ENT_QUOTES, 'UTF-8') ?>">
     </label>
-    <label class="filter-field">
+    <label>
         <span>Status</span>
         <select name="status">
             <?php foreach ($statusOptions as $value => $label): ?>
@@ -97,15 +97,15 @@ $exportQuery = http_build_query([
             <?php endforeach; ?>
         </select>
     </label>
-    <label class="filter-field">
+    <label>
         <span>From</span>
         <input type="date" name="date_from" value="<?= htmlspecialchars((string) $dateFrom, ENT_QUOTES, 'UTF-8') ?>">
     </label>
-    <label class="filter-field">
+    <label>
         <span>To</span>
         <input type="date" name="date_to" value="<?= htmlspecialchars((string) $dateTo, ENT_QUOTES, 'UTF-8') ?>">
     </label>
-    <label class="filter-field">
+    <label>
         <span>Per page</span>
         <select name="per_page">
             <?php foreach ([20, 50, 100] as $option): ?>
@@ -151,7 +151,19 @@ $exportQuery = http_build_query([
 
 <form method="POST" action="/admin/submissions/bulk" class="utility-form">
 <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
-<div class="table-wrap">
+<div class="table-wrap submissions-table">
+    <div class="table-toolbar">
+        <span>Bulk actions</span>
+        <div class="form-actions">
+            <select name="bulk_action" aria-label="Bulk action">
+                <option value="review">Mark reviewed</option>
+                <option value="resend">Resend failed</option>
+                <option value="export">Export selected</option>
+                <option value="delete">Delete selected</option>
+            </select>
+            <button type="submit" class="secondary">Apply</button>
+        </div>
+    </div>
     <table>
         <thead>
             <tr><th><span class="muted">Select</span></th><th>ID</th><th>Form</th><th>Status</th><th>Created</th><th>Action</th></tr>
@@ -175,21 +187,9 @@ $exportQuery = http_build_query([
         </tbody>
     </table>
 </div>
-<div class="table-footer">
-    <div class="form-actions">
-        <select name="bulk_action" aria-label="Bulk action">
-            <option value="review">Mark reviewed</option>
-            <option value="resend">Resend failed</option>
-            <option value="export">Export selected</option>
-            <option value="delete">Delete selected</option>
-        </select>
-        <button type="submit" class="secondary">Apply</button>
-    </div>
-</div>
 </form>
 
 <div class="table-footer">
-    <span><?= number_format($total) ?> total submissions</span>
     <div class="pager">
         <?php if ($page > 1): ?>
             <a class="button secondary" href="<?= htmlspecialchars($pageUrl($page - 1), ENT_QUOTES, 'UTF-8') ?>">Previous</a>
