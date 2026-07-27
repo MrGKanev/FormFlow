@@ -11,6 +11,8 @@ use formflow\SqliteRateLimiter;
 use formflow\SqliteSubmissionRepository;
 use formflow\Tests\Fakes\FakeMailSender;
 use formflow\Tests\Fakes\FakeTurnstileVerifier;
+use formflow\Tests\Fakes\FakeWebhookNotifier;
+use formflow\WebhookNotifierInterface;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -58,7 +60,8 @@ final class FormHandlerTest extends TestCase
         ?SqliteSubmissionRepository $repository = null,
         ?SqliteRateLimiter $rateLimiter = null,
         ?FormApiKeyRepositoryInterface $apiKeys = null,
-        string $uploadDirectory = ''
+        string $uploadDirectory = '',
+        ?WebhookNotifierInterface $webhookNotifier = null
     ): FormHandler {
         return new FormHandler(
             $forms,
@@ -68,7 +71,7 @@ final class FormHandlerTest extends TestCase
             $rateLimiter ?? new SqliteRateLimiter(':memory:'),
             'test-secret',
             $apiKeys ?? new SqliteFormApiKeyRepository(':memory:'),
-            null,
+            $webhookNotifier,
             $uploadDirectory
         );
     }
@@ -104,6 +107,152 @@ final class FormHandlerTest extends TestCase
                 rmdir($directory);
             }
         }
+    }
+
+    public function testUploadPolicyStoresAnAllowedFile(): void
+    {
+        $directory = sys_get_temp_dir() . '/formflow-upload-' . bin2hex(random_bytes(6));
+        $source = tempnam(sys_get_temp_dir(), 'formflow-source-');
+        self::assertNotFalse($source);
+        file_put_contents($source, 'PDF content');
+        $_POST = ['email' => 'ada@example.com'];
+        $_FILES = [
+            'attachment' => [
+                'name' => 'document.PDF',
+                'tmp_name' => $source,
+                'error' => UPLOAD_ERR_OK,
+                'size' => filesize($source),
+            ],
+        ];
+        $mailSender = new FakeMailSender();
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm(['turnstile' => false, 'uploads' => ['allowed_extensions' => ['pdf']]])],
+            $mailSender,
+            null,
+            $repository,
+            null,
+            null,
+            $directory
+        );
+
+        try {
+            $result = $handler->handle('contact');
+
+            $this->assertSame(200, $result['status']);
+            $this->assertCount(1, $mailSender->sentMessages);
+            $this->assertStringContainsString('document.PDF', $mailSender->sentMessages[0]['fields']['attachment']);
+            $this->assertCount(1, glob($directory . '/*') ?: []);
+            $payload = json_decode((string) $repository->find(1)['payload'], true, flags: JSON_THROW_ON_ERROR);
+            $this->assertArrayHasKey('attachment', $payload);
+        } finally {
+            foreach (glob($directory . '/*') ?: [] as $file) {
+                unlink($file);
+            }
+            if (is_dir($directory)) {
+                rmdir($directory);
+            }
+            if (is_file($source)) {
+                unlink($source);
+            }
+        }
+    }
+
+    public function testUploadPolicyRejectsTooManyFilesBeforeStoringAnyFile(): void
+    {
+        $directory = sys_get_temp_dir() . '/formflow-upload-' . bin2hex(random_bytes(6));
+        $first = tempnam(sys_get_temp_dir(), 'formflow-source-');
+        $second = tempnam(sys_get_temp_dir(), 'formflow-source-');
+        self::assertNotFalse($first);
+        self::assertNotFalse($second);
+        file_put_contents($first, 'first');
+        file_put_contents($second, 'second');
+        $_POST = ['email' => 'ada@example.com'];
+        $_FILES = [
+            'attachments' => [
+                'name' => ['first.pdf', 'second.pdf'],
+                'tmp_name' => [$first, $second],
+                'error' => [UPLOAD_ERR_OK, UPLOAD_ERR_OK],
+                'size' => [filesize($first), filesize($second)],
+            ],
+        ];
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm(['uploads' => ['max_files' => 1, 'allowed_extensions' => ['pdf']]])],
+            uploadDirectory: $directory
+        );
+
+        try {
+            $this->expectException(InvalidArgumentException::class);
+            $this->expectExceptionMessage('Too many files were uploaded.');
+            $handler->handle('contact');
+        } finally {
+            $this->assertSame([], glob($directory . '/*') ?: []);
+            if (is_dir($directory)) {
+                rmdir($directory);
+            }
+            if (is_file($first)) {
+                unlink($first);
+            }
+            if (is_file($second)) {
+                unlink($second);
+            }
+        }
+    }
+
+    public function testUploadPolicyRejectsFilesAboveTheConfiguredSize(): void
+    {
+        $directory = sys_get_temp_dir() . '/formflow-upload-' . bin2hex(random_bytes(6));
+        $_POST = ['email' => 'ada@example.com'];
+        $_FILES = [
+            'attachment' => [
+                'name' => 'document.pdf',
+                'tmp_name' => '',
+                'error' => UPLOAD_ERR_OK,
+                'size' => 1024 * 1024 + 1,
+            ],
+        ];
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm(['uploads' => ['max_file_size_mb' => 1]])],
+            uploadDirectory: $directory
+        );
+
+        try {
+            $this->expectException(InvalidArgumentException::class);
+            $this->expectExceptionMessage('is too large');
+            $handler->handle('contact');
+        } finally {
+            if (is_dir($directory)) {
+                rmdir($directory);
+            }
+        }
+    }
+
+    public function testPassesSelectedNotificationChannelsToWebhookNotifier(): void
+    {
+        $_POST = ['email' => 'ada@example.com'];
+        $notifier = new FakeWebhookNotifier();
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm(['turnstile' => false, 'notification_channels' => ['slack']])],
+            webhookNotifier: $notifier
+        );
+
+        $handler->handle('contact');
+
+        $this->assertSame(['slack'], $notifier->notifications[0]['channels']);
+    }
+
+    public function testPassesNullChannelsForLegacyFormConfigurations(): void
+    {
+        $_POST = ['email' => 'ada@example.com'];
+        $notifier = new FakeWebhookNotifier();
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm(['turnstile' => false])],
+            webhookNotifier: $notifier
+        );
+
+        $handler->handle('contact');
+
+        $this->assertNull($notifier->notifications[0]['channels']);
     }
 
     public function testUnknownFormReturns404(): void

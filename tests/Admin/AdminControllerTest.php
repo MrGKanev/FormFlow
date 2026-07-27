@@ -18,6 +18,7 @@ use formflow\SqliteFormApiKeyRepository;
 use formflow\SqliteFormRepository;
 use formflow\SqliteRateLimiter;
 use formflow\SqliteSubmissionRepository;
+use formflow\SqliteWebhookDeliveryRepository;
 use formflow\Tests\Fakes\FakeMailSender;
 use PHPUnit\Framework\TestCase;
 
@@ -61,7 +62,8 @@ final class AdminControllerTest extends TestCase
         ?string $securityConfigPath = null,
         ?AdminUserRepositoryInterface $adminUsers = null,
         ?AuditLogRepositoryInterface $auditLog = null,
-        ?MailSenderInterface $mailSender = null
+        ?MailSenderInterface $mailSender = null,
+        ?SqliteWebhookDeliveryRepository $webhookDeliveries = null
     ): AdminController {
         $whitelistRepository ??= new SqliteAdminWhitelistRepository(':memory:');
         $forms ??= [
@@ -92,7 +94,8 @@ final class AdminControllerTest extends TestCase
             $securityConfigPath,
             $adminUsers,
             $auditLog,
-            $mailSender
+            $mailSender,
+            $webhookDeliveries
         );
     }
 
@@ -580,6 +583,30 @@ final class AdminControllerTest extends TestCase
         $this->assertSame([], $formRepository->all());
     }
 
+    public function testNewFormPageRejectsInvalidUploadExtension(): void
+    {
+        $formRepository = new SqliteFormRepository(':memory:');
+        $controller = $this->makeController(formRepository: $formRepository);
+        $this->login($controller);
+        $controller->handle('admin/forms/new');
+        $token = $this->csrfToken();
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = [
+            'form_id' => 'newsletter',
+            'recipient' => 'news@example.com',
+            'allowed_origins' => 'https://example.com',
+            'upload_allowed_extensions' => 'tar.gz',
+            'csrf_token' => $token,
+        ];
+
+        $result = $controller->handle('admin/forms/new');
+
+        $this->assertSame(422, $result['status']);
+        $this->assertStringContainsString('Allowed file extensions', $result['body']);
+        $this->assertSame([], $formRepository->all());
+    }
+
     public function testNewFormPagePostWithoutCsrfTokenReturns419(): void
     {
         $formRepository = new SqliteFormRepository(':memory:');
@@ -946,6 +973,10 @@ final class AdminControllerTest extends TestCase
             'rate_limit_window' => '10',
             'daily_limit' => '200',
             'require_api_key' => '1',
+            'upload_max_file_size_mb' => '12',
+            'upload_max_files' => '4',
+            'upload_allowed_extensions' => "pdf\nPNG",
+            'notification_channels' => ['discord', 'telegram'],
             'csrf_token' => $token,
         ];
 
@@ -955,6 +986,12 @@ final class AdminControllerTest extends TestCase
         $forms = $formRepository->all();
         $this->assertSame('new@example.com', $forms['newsletter']['recipient']);
         $this->assertTrue($forms['newsletter']['require_api_key']);
+        $this->assertSame([
+            'max_file_size_mb' => 12,
+            'max_files' => 4,
+            'allowed_extensions' => ['pdf', 'png'],
+        ], $forms['newsletter']['uploads']);
+        $this->assertSame(['discord', 'telegram'], $forms['newsletter']['notification_channels']);
     }
 
     public function testSubmissionActionsReviewDeleteAndExport(): void
@@ -1019,9 +1056,16 @@ final class AdminControllerTest extends TestCase
     {
         $submissions = new SqliteSubmissionRepository(':memory:');
         $submissions->create('contact', ['name' => 'Ada'], null, 'failed');
+        $webhookDeliveries = new SqliteWebhookDeliveryRepository(':memory:');
+        $webhookDeliveries->record('contact', 'slack', 'failed', 3, 'Webhook returned HTTP 500.');
         $audit = new SqliteAuditLogRepository(':memory:');
         $audit->record('admin', 'test.action', 'Something happened.');
-        $controller = $this->makeController(['203.0.113.10'], $submissions, auditLog: $audit);
+        $controller = $this->makeController(
+            ['203.0.113.10'],
+            $submissions,
+            auditLog: $audit,
+            webhookDeliveries: $webhookDeliveries
+        );
         $this->login($controller);
 
         $delivery = $controller->handle('admin/delivery');
@@ -1029,6 +1073,8 @@ final class AdminControllerTest extends TestCase
 
         $this->assertSame(200, $delivery['status']);
         $this->assertStringContainsString('Delivery log', $delivery['body']);
+        $this->assertStringContainsString('Integration deliveries', $delivery['body']);
+        $this->assertStringContainsString('Slack', $delivery['body']);
         $this->assertSame(200, $auditPage['status']);
         $this->assertStringContainsString('test.action', $auditPage['body']);
     }
