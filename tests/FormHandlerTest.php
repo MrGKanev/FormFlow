@@ -63,7 +63,8 @@ final class FormHandlerTest extends TestCase
         ?FormApiKeyRepositoryInterface $apiKeys = null,
         string $uploadDirectory = '',
         ?WebhookNotifierInterface $webhookNotifier = null,
-        ?FakeCaptchaVerifier $captchaVerifier = null
+        ?FakeCaptchaVerifier $captchaVerifier = null,
+        bool $deferMail = false
     ): FormHandler {
         return new FormHandler(
             $forms,
@@ -75,7 +76,9 @@ final class FormHandlerTest extends TestCase
             $apiKeys ?? new SqliteFormApiKeyRepository(':memory:'),
             $webhookNotifier,
             $uploadDirectory,
-            $captchaVerifier
+            $captchaVerifier,
+            null,
+            $deferMail
         );
     }
 
@@ -117,7 +120,7 @@ final class FormHandlerTest extends TestCase
         $directory = sys_get_temp_dir() . '/formflow-upload-' . bin2hex(random_bytes(6));
         $source = tempnam(sys_get_temp_dir(), 'formflow-source-');
         self::assertNotFalse($source);
-        file_put_contents($source, 'PDF content');
+        file_put_contents($source, "%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n");
         $_POST = ['email' => 'ada@example.com'];
         $_FILES = [
             'attachment' => [
@@ -157,6 +160,68 @@ final class FormHandlerTest extends TestCase
             }
             if (is_file($source)) {
                 unlink($source);
+            }
+        }
+    }
+
+    public function testUploadPolicyRejectsDangerousExtensionWithoutAllowList(): void
+    {
+        $directory = sys_get_temp_dir() . '/formflow-upload-' . bin2hex(random_bytes(6));
+        $_POST = ['email' => 'ada@example.com'];
+        $_FILES = [
+            'attachment' => [
+                'name' => 'shell.php',
+                'tmp_name' => '',
+                'error' => UPLOAD_ERR_OK,
+                'size' => 1,
+            ],
+        ];
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm(['turnstile' => false])],
+            uploadDirectory: $directory
+        );
+
+        try {
+            $this->expectException(InvalidArgumentException::class);
+            $this->expectExceptionMessage('unsupported file type');
+            $handler->handle('contact');
+        } finally {
+            if (is_dir($directory)) {
+                rmdir($directory);
+            }
+        }
+    }
+
+    public function testUploadPolicyRejectsKnownExtensionWithWrongMimeType(): void
+    {
+        $directory = sys_get_temp_dir() . '/formflow-upload-' . bin2hex(random_bytes(6));
+        $source = tempnam(sys_get_temp_dir(), 'formflow-source-');
+        self::assertNotFalse($source);
+        file_put_contents($source, 'plain text, not a pdf');
+        $_POST = ['email' => 'ada@example.com'];
+        $_FILES = [
+            'attachment' => [
+                'name' => 'document.pdf',
+                'tmp_name' => $source,
+                'error' => UPLOAD_ERR_OK,
+                'size' => filesize($source),
+            ],
+        ];
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm(['turnstile' => false, 'uploads' => ['allowed_extensions' => ['pdf']]])],
+            uploadDirectory: $directory
+        );
+
+        try {
+            $this->expectException(InvalidArgumentException::class);
+            $this->expectExceptionMessage('unsupported MIME type');
+            $handler->handle('contact');
+        } finally {
+            if (is_file($source)) {
+                unlink($source);
+            }
+            if (is_dir($directory)) {
+                rmdir($directory);
             }
         }
     }
@@ -490,6 +555,34 @@ final class FormHandlerTest extends TestCase
         $payload = json_decode((string) $row['payload'], true, flags: JSON_THROW_ON_ERROR);
 
         $this->assertSame($mailSender->sentMessages[0]['fields'], $payload);
+    }
+
+    public function testQueuedMailModeStoresPendingSubmissionWithoutSendingImmediately(): void
+    {
+        $_POST = [
+            'name' => 'Ada',
+            'email' => 'ada@example.com',
+            'message' => 'Hello',
+            'cf-turnstile-response' => 'good-token',
+        ];
+
+        $mailSender = new FakeMailSender();
+        $repository = new SqliteSubmissionRepository(':memory:');
+
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm()],
+            $mailSender,
+            new FakeTurnstileVerifier(true),
+            $repository,
+            deferMail: true
+        );
+
+        $result = $handler->handle('contact');
+
+        $this->assertSame(200, $result['status']);
+        $this->assertSame('Submission accepted.', $result['body']['message']);
+        $this->assertSame([], $mailSender->sentMessages);
+        $this->assertSame('pending_mail', $repository->find(1)['status']);
     }
 
     public function testMailFailureMarksSubmissionFailedAndThrows(): void

@@ -4,6 +4,7 @@
 declare(strict_types=1);
 
 use formflow\CurlWebhookTransport;
+use formflow\MailDeliveryWorker;
 use formflow\MailFailureRetrier;
 use formflow\MailService;
 use formflow\SqliteFormRepository;
@@ -76,6 +77,7 @@ function cliUsage(): void
 {
     fwrite(STDERR, "Usage:\n");
     fwrite(STDERR, "  php bin/formflow retention:prune [--days=180]\n");
+    fwrite(STDERR, "  php bin/formflow mail:work [--limit=100]\n");
     fwrite(STDERR, "  php bin/formflow mail:retry-failed [--limit=100]\n");
     fwrite(STDERR, "  php bin/formflow webhooks:retry [--limit=100]\n");
 }
@@ -90,21 +92,33 @@ if ($command === 'retention:prune') {
     exit(0);
 }
 
-if ($command === 'mail:retry-failed') {
+if ($command === 'mail:work' || $command === 'mail:retry-failed') {
     $configuredForms = require $root . '/config/forms.php';
     $forms = array_merge($configuredForms, (new SqliteFormRepository($databasePath))->all());
-    $summary = (new MailFailureRetrier(
-        $forms,
-        new MailService(
-            cliMailerDsnFromEnv(),
-            getenv('MAIL_FROM') ?: '',
-            getenv('MAIL_FROM_NAME') ?: 'formflow'
-        ),
-        new SqliteSubmissionRepository($databasePath)
-    ))->process((int) cliOption($argv, 'limit', '100'));
+    $worker = $command === 'mail:work'
+        ? new MailDeliveryWorker(
+            $forms,
+            new MailService(
+                cliMailerDsnFromEnv(),
+                getenv('MAIL_FROM') ?: '',
+                getenv('MAIL_FROM_NAME') ?: 'formflow'
+            ),
+            new SqliteSubmissionRepository($databasePath)
+        )
+        : new MailFailureRetrier(
+            $forms,
+            new MailService(
+                cliMailerDsnFromEnv(),
+                getenv('MAIL_FROM') ?: '',
+                getenv('MAIL_FROM_NAME') ?: 'formflow'
+            ),
+            new SqliteSubmissionRepository($databasePath)
+        );
+    $summary = $worker->process((int) cliOption($argv, 'limit', '100'));
 
     echo sprintf(
-        "Mail retry attempted=%d sent=%d failed=%d skipped=%d\n",
+        "%s attempted=%d sent=%d failed=%d skipped=%d\n",
+        $command === 'mail:work' ? 'Mail worker' : 'Mail retry',
         $summary['attempted'],
         $summary['sent'],
         $summary['failed'],

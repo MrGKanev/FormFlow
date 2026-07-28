@@ -141,6 +141,14 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
         return $statement->fetchAll();
     }
 
+    public function countByStatus(string $status): int
+    {
+        $statement = $this->pdo->prepare('SELECT COUNT(*) AS total FROM webhook_deliveries WHERE status = :status');
+        $statement->execute(['status' => $status]);
+
+        return (int) $statement->fetch()['total'];
+    }
+
     private function createSchema(): void
     {
         $this->pdo->exec(

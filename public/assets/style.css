@@ -922,6 +922,46 @@ code {
     font-weight: 780;
 }
 
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.875rem;
+}
+
+.detail-grid > div {
+    display: grid;
+    gap: 0.45rem;
+    min-width: 0;
+    padding: 0.85rem;
+    border: 0.0625rem solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-subtle);
+}
+
+.detail-grid span:first-child {
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 720;
+    text-transform: uppercase;
+}
+
+.detail-grid strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.system-value {
+    display: block;
+    max-width: 100%;
+    color: var(--text);
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: 0.82rem;
+    font-weight: 650;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
 .setup-panel {
     margin-bottom: 1.125rem;
 }
@@ -1220,6 +1260,7 @@ ul.features li strong {
     .filter-form,
     .form-grid,
     .dashboard-summary,
+    .detail-grid,
     .option-grid,
     .totp-setup,
     .split-grid,

@@ -24,6 +24,8 @@ interface WebhookDeliveryRepositoryInterface
 
     public function markQueuedFailed(int $id, int $attempts, string $errorMessage, ?int $retryAfterSeconds = null): void;
 
+    public function countByStatus(string $status): int;
+
     /** @return list<array<string, mixed>> */
     public function deliveryLog(int $limit = 100): array;
 }

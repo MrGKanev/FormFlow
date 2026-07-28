@@ -54,6 +54,9 @@ interface SubmissionRepositoryInterface
     public function findFailed(int $limit = 100): array;
 
     /** @return list<array<string, mixed>> */
+    public function findPendingMail(int $limit = 100, bool $includeFailed = false): array;
+
+    /** @return list<array<string, mixed>> */
     public function deliveryLog(int $limit = 100): array;
 
     /** @return list<array<string, mixed>> */

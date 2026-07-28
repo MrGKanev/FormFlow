@@ -102,6 +102,10 @@ final class AdminController
             return $this->handleDelivery();
         }
 
+        if ($path === 'admin/system') {
+            return $this->handleSystem();
+        }
+
         if ($path === 'admin/whitelist') {
             return $this->handleWhitelist();
         }
@@ -803,6 +807,8 @@ final class AdminController
             'generic_webhook_url' => $env['GENERIC_WEBHOOK_URL'] ?? (getenv('GENERIC_WEBHOOK_URL') ?: ''),
             'telegram_bot_token' => $env['TELEGRAM_BOT_TOKEN'] ?? (getenv('TELEGRAM_BOT_TOKEN') ?: ''),
             'telegram_chat_id' => $env['TELEGRAM_CHAT_ID'] ?? (getenv('TELEGRAM_CHAT_ID') ?: ''),
+            'mail_delivery_mode' => $env['MAIL_DELIVERY_MODE'] ?? (getenv('MAIL_DELIVERY_MODE') ?: 'sync'),
+            'webhook_delivery_mode' => $env['WEBHOOK_DELIVERY_MODE'] ?? (getenv('WEBHOOK_DELIVERY_MODE') ?: 'sync'),
             'database_path' => $env['DATABASE_PATH'] ?? (getenv('DATABASE_PATH') ?: 'storage/submissions.sqlite'),
             'ip_hash_secret' => $env['IP_HASH_SECRET'] ?? (getenv('IP_HASH_SECRET') ?: ''),
             'retention_days' => $env['RETENTION_DAYS'] ?? (getenv('RETENTION_DAYS') ?: '180'),
@@ -812,6 +818,12 @@ final class AdminController
             'login_rate_limit_max' => (string) 5,
             'login_rate_limit_window' => (string) 15,
             'blocked_ips' => implode(PHP_EOL, $securityConfig['blocked_ips'] ?? []),
+            'trusted_proxies' => implode(PHP_EOL, $securityConfig['trusted_proxies'] ?? []),
+            'trusted_ip_headers' => implode(PHP_EOL, $securityConfig['trusted_ip_headers'] ?? [
+                'HTTP_CF_CONNECTING_IP',
+                'HTTP_X_FORWARDED_FOR',
+                'HTTP_X_REAL_IP',
+            ]),
         ], $this->adminRateLimitSettings());
     }
 
@@ -847,6 +859,8 @@ final class AdminController
             'generic_webhook_url',
             'telegram_bot_token',
             'telegram_chat_id',
+            'mail_delivery_mode',
+            'webhook_delivery_mode',
             'database_path',
             'ip_hash_secret',
             'retention_days',
@@ -892,6 +906,13 @@ final class AdminController
             throw new InvalidArgumentException('SMTP encryption must be TLS, SSL, or None.');
         }
 
+        $mailDeliveryMode = strtolower(trim((string) ($input['mail_delivery_mode'] ?? 'sync')));
+        $webhookDeliveryMode = strtolower(trim((string) ($input['webhook_delivery_mode'] ?? 'sync')));
+
+        if (!in_array($mailDeliveryMode, ['sync', 'queue'], true) || !in_array($webhookDeliveryMode, ['sync', 'queue'], true)) {
+            throw new InvalidArgumentException('Delivery modes must be sync or queue.');
+        }
+
         $databasePath = trim((string) ($input['database_path'] ?? ''));
 
         if ($databasePath === '') {
@@ -921,6 +942,8 @@ final class AdminController
         $loginMax = max(1, (int) ($input['login_rate_limit_max'] ?? 5));
         $loginWindow = max(1, (int) ($input['login_rate_limit_window'] ?? 15));
         $blockedIps = $this->validatedIpEntries((string) ($input['blocked_ips'] ?? ''));
+        $trustedProxies = $this->validatedIpEntries((string) ($input['trusted_proxies'] ?? ''));
+        $trustedHeaders = $this->validatedTrustedHeaders((string) ($input['trusted_ip_headers'] ?? ''));
 
         return [
             'env' => [
@@ -947,6 +970,8 @@ final class AdminController
                 'GENERIC_WEBHOOK_URL' => trim((string) ($input['generic_webhook_url'] ?? '')),
                 'TELEGRAM_BOT_TOKEN' => trim((string) ($input['telegram_bot_token'] ?? '')),
                 'TELEGRAM_CHAT_ID' => trim((string) ($input['telegram_chat_id'] ?? '')),
+                'MAIL_DELIVERY_MODE' => $mailDeliveryMode,
+                'WEBHOOK_DELIVERY_MODE' => $webhookDeliveryMode,
                 'DATABASE_PATH' => $databasePath,
                 'IP_HASH_SECRET' => $ipHashSecret,
                 'RETENTION_DAYS' => (string) $retentionDays,
@@ -959,6 +984,8 @@ final class AdminController
                 'window_minutes' => $loginWindow,
             ],
             'blocked_ips' => $blockedIps,
+            'trusted_proxies' => $trustedProxies,
+            'trusted_ip_headers' => $trustedHeaders,
         ];
     }
 
@@ -973,7 +1000,11 @@ final class AdminController
 
         $this->writeEnvFile($envUpdates);
         $this->writeAdminConfig($settings['login_rate_limit']);
-        $this->writeSecurityConfig($settings['blocked_ips']);
+        $this->writeSecurityConfig(
+            $settings['blocked_ips'],
+            $settings['trusted_proxies'],
+            $settings['trusted_ip_headers']
+        );
         $this->recordAudit('settings.update', 'Updated global settings.');
     }
 
@@ -1035,6 +1066,25 @@ final class AdminController
         }
 
         return $entries;
+    }
+
+    /** @return list<string> */
+    private function validatedTrustedHeaders(string $value): array
+    {
+        $headers = $this->lines($value);
+        $allowed = [
+            'HTTP_CF_CONNECTING_IP',
+            'HTTP_X_FORWARDED_FOR',
+            'HTTP_X_REAL_IP',
+        ];
+
+        foreach ($headers as $header) {
+            if (!in_array($header, $allowed, true)) {
+                throw new InvalidArgumentException('Trusted IP headers must be CF-Connecting-IP, X-Forwarded-For, or X-Real-IP server keys.');
+            }
+        }
+
+        return $headers;
     }
 
     /** @return array<string, string> */
@@ -1174,12 +1224,24 @@ final class AdminController
         return is_array($config) ? $config : [];
     }
 
-    /** @param list<string> $blockedIps */
-    private function writeSecurityConfig(array $blockedIps): void
+    /**
+     * @param list<string> $blockedIps
+     * @param list<string>|null $trustedProxies
+     * @param list<string>|null $trustedHeaders
+     */
+    private function writeSecurityConfig(array $blockedIps, ?array $trustedProxies = null, ?array $trustedHeaders = null): void
     {
         if ($this->securityConfigPath === null) {
             return;
         }
+
+        $existing = $this->securityConfig();
+        $trustedProxies ??= array_values(array_map('strval', $existing['trusted_proxies'] ?? []));
+        $trustedHeaders ??= array_values(array_map('strval', $existing['trusted_ip_headers'] ?? [
+            'HTTP_CF_CONNECTING_IP',
+            'HTTP_X_FORWARDED_FOR',
+            'HTTP_X_REAL_IP',
+        ]));
 
         $content = "<?php\n\n";
         $content .= "declare(strict_types=1);\n\n";
@@ -1188,6 +1250,22 @@ final class AdminController
 
         foreach ($blockedIps as $ip) {
             $content .= "        '" . addslashes($ip) . "',\n";
+        }
+
+        $content .= "    ],\n";
+        $content .= "\n";
+        $content .= "    'trusted_proxies' => [\n";
+
+        foreach ($trustedProxies as $ip) {
+            $content .= "        '" . addslashes($ip) . "',\n";
+        }
+
+        $content .= "    ],\n";
+        $content .= "\n";
+        $content .= "    'trusted_ip_headers' => [\n";
+
+        foreach ($trustedHeaders as $header) {
+            $content .= "        '" . addslashes($header) . "',\n";
         }
 
         $content .= "    ],\n";
@@ -1261,6 +1339,13 @@ final class AdminController
         return $this->htmlResponse(200, $this->render('audit', [
             'entries' => $this->auditLog?->list() ?? [],
         ], 'Audit log'));
+    }
+
+    private function handleSystem(): array
+    {
+        return $this->htmlResponse(200, $this->render('system', [
+            'status' => $this->systemStatus(),
+        ], 'System status'));
     }
 
     private function handleRecovery(): array
@@ -1369,8 +1454,13 @@ final class AdminController
             $this->writeSettings($settings);
         }
 
-        if (isset($data['security']['blocked_ips']) && is_array($data['security']['blocked_ips'])) {
-            $this->writeSecurityConfig(array_values(array_map('strval', $data['security']['blocked_ips'])));
+        if (isset($data['security']) && is_array($data['security'])) {
+            $security = array_merge($this->securityConfig(), $data['security']);
+            $this->writeSecurityConfig(
+                array_values(array_map('strval', is_array($security['blocked_ips'] ?? null) ? $security['blocked_ips'] : [])),
+                array_values(array_map('strval', is_array($security['trusted_proxies'] ?? null) ? $security['trusted_proxies'] : [])),
+                array_values(array_map('strval', is_array($security['trusted_ip_headers'] ?? null) ? $security['trusted_ip_headers'] : []))
+            );
         }
 
         if (isset($data['forms']) && is_array($data['forms'])) {
@@ -1409,6 +1499,56 @@ final class AdminController
             'storage' => is_dir($databaseDirectory) && is_writable($databaseDirectory) ? 'Writable' : 'Check storage',
             'forms' => (string) count($this->forms),
         ];
+    }
+
+    /** @return array<string, string|int> */
+    private function systemStatus(): array
+    {
+        $settings = $this->currentSettings();
+        $databasePath = (string) ($settings['database_path'] ?? 'storage/submissions.sqlite');
+        $absoluteDatabasePath = str_starts_with($databasePath, '/')
+            ? $databasePath
+            : dirname(__DIR__, 2) . '/' . ltrim($databasePath, '/');
+        $storagePath = dirname($absoluteDatabasePath);
+        $uploadPath = dirname(__DIR__, 2) . '/storage/uploads';
+        $failedMail = $this->submissions->count(null, 'failed');
+        $pendingMail = $this->submissions->count(null, 'pending_mail');
+        $pendingWebhooks = $this->webhookDeliveries?->countByStatus('pending') ?? 0;
+
+        return [
+            'php_version' => PHP_VERSION,
+            'database_path' => $absoluteDatabasePath,
+            'database_status' => is_file($absoluteDatabasePath) ? 'Present' : 'Missing',
+            'database_size' => is_file($absoluteDatabasePath) ? $this->humanBytes(filesize($absoluteDatabasePath) ?: 0) : '0 B',
+            'storage_writable' => is_dir($storagePath) && is_writable($storagePath) ? 'Writable' : 'Check storage',
+            'uploads_writable' => is_dir($uploadPath) && is_writable($uploadPath) ? 'Writable' : 'Check uploads',
+            'mail_delivery_mode' => (string) ($settings['mail_delivery_mode'] ?? 'sync'),
+            'webhook_delivery_mode' => (string) ($settings['webhook_delivery_mode'] ?? 'sync'),
+            'pending_mail' => $pendingMail,
+            'failed_mail' => $failedMail,
+            'pending_webhooks' => $pendingWebhooks,
+            'forms' => count($this->forms),
+            'trusted_proxies' => count($this->lines((string) ($settings['trusted_proxies'] ?? ''))),
+        ];
+    }
+
+    private function humanBytes(int $bytes): string
+    {
+        $units = ['B', 'KB', 'MB', 'GB'];
+        $value = (float) $bytes;
+        $unit = 'B';
+
+        foreach ($units as $unit) {
+            if ($value < 1024 || $unit === 'GB') {
+                break;
+            }
+
+            $value /= 1024;
+        }
+
+        return $unit === 'B'
+            ? (string) $bytes . ' B'
+            : number_format($value, 1) . ' ' . $unit;
     }
 
     /**

@@ -217,6 +217,21 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         return $statement->fetchAll();
     }
 
+    public function findPendingMail(int $limit = 100, bool $includeFailed = false): array
+    {
+        $statuses = $includeFailed ? ['pending_mail', 'failed'] : ['pending_mail'];
+        $placeholders = implode(', ', array_fill(0, count($statuses), '?'));
+        $statement = $this->pdo->prepare(
+            'SELECT * FROM submissions
+             WHERE status IN (' . $placeholders . ')
+             ORDER BY created_at ASC, id ASC
+             LIMIT ?'
+        );
+        $statement->execute([...$statuses, max(1, $limit)]);
+
+        return $statement->fetchAll();
+    }
+
     public function deliveryLog(int $limit = 100): array
     {
         $statement = $this->pdo->prepare(

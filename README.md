@@ -80,6 +80,7 @@ Routes:
 - `/admin/forms` - review configured forms and copy integration snippets. Snippets use `APP_URL`, so forms can submit from separate websites to one hosted FormFlow instance.
 - `/admin/forms/new` - create a new database-backed form endpoint.
 - `/admin/forms/{id}/edit` - edit an existing form, storing changes as a database-backed configuration.
+- `/admin/system` - operational status for storage, delivery queues, trusted proxy setup, and runtime checks.
 - `/admin/login` - login form.
 - `/admin/logout` - logout, redirect to `/admin/login`.
 - `/admin/submissions/{id}` - details for a specific submission, with review, resend, and delete actions.
@@ -120,6 +121,18 @@ Retry failed email deliveries:
 php bin/formflow mail:retry-failed --limit=100
 ```
 
+Email delivery can also be queued:
+
+```dotenv
+MAIL_DELIVERY_MODE=queue
+```
+
+Then run the mail worker from cron:
+
+```bash
+php bin/formflow mail:work --limit=100
+```
+
 Webhook delivery can stay synchronous, or be queued by setting:
 
 ```dotenv
@@ -130,6 +143,15 @@ Then run the worker from cron:
 
 ```bash
 php bin/formflow webhooks:retry --limit=100
+```
+
+Example cron entries:
+
+```cron
+* * * * * cd /var/www/formflow && php bin/formflow mail:work --limit=100 >/dev/null 2>&1
+* * * * * cd /var/www/formflow && php bin/formflow webhooks:retry --limit=100 >/dev/null 2>&1
+15 3 * * * cd /var/www/formflow && php bin/formflow retention:prune --days=180 >/dev/null 2>&1
+0 3 * * * sqlite3 /var/www/formflow/storage/submissions.sqlite ".backup '/backup/formflow-$(date +\%F).sqlite'"
 ```
 
 ## Deployment
@@ -153,8 +175,8 @@ The included image serves `public/` through Apache and mounts `storage/` for SQL
   - Slack: `SLACK_WEBHOOK_URL`
   - Telegram: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
   - Generic webhook: `GENERIC_WEBHOOK_URL`; receives `{"form_id":"…","fields":{…}}`, which works with Zapier, Make, n8n, or a custom service.
-  Each form selects which channels receive its submissions. New forms start with no selected notification channels. A form can override the global Discord, Slack, Telegram, or generic webhook settings when it needs a form-specific destination; blank override fields use the global integration settings. Existing runtime configs without a saved selection still notify every configured global integration. Every webhook delivery is attempted up to three times and the final result is visible in `/admin/delivery`. Notifications never prevent a successfully stored submission from being accepted.
-- File uploads are accepted from multipart forms and stored under `storage/uploads`; payloads store the original filename plus local storage path. Configure per-form size, count, and extension rules before exposing an upload field in the form markup.
+  Each form selects which channels receive its submissions. New forms start with no selected notification channels. A form can override the global Discord, Slack, Telegram, or generic webhook settings when it needs a form-specific destination; blank override fields use the global integration settings. Existing runtime configs without a saved selection still notify every configured global integration. Every webhook delivery is attempted up to three times in sync mode, or by `webhooks:retry` in queue mode, and the final result is visible in `/admin/delivery`. Notifications never prevent a successfully stored submission from being accepted.
+- File uploads are accepted from multipart forms and stored under `storage/uploads`; payloads store the original filename plus local storage path. Configure per-form size, count, and extension rules before exposing an upload field in the form markup. Dangerous executable/script extensions are rejected even without an allow-list, and common file types are checked with MIME detection when PHP's `fileinfo` support is available.
 - CAPTCHA providers are configured on `/admin/settings?tab=protection`: Cloudflare Turnstile (`TURNSTILE_SECRET`, `TURNSTILE_SITE_KEY`), hCaptcha (`HCAPTCHA_SECRET`, `HCAPTCHA_SITE_KEY`), Google reCAPTCHA v2 (`RECAPTCHA_SECRET`, `RECAPTCHA_SITE_KEY`), and Friendly Captcha (`FRIENDLY_CAPTCHA_API_KEY`, `FRIENDLY_CAPTCHA_SITE_KEY`). Form snippets include the matching widget script when the selected provider has a site key.
 - Admin 2FA uses TOTP secrets (`ADMIN_TOTP_SECRET` for the bootstrap user, optional TOTP secret for DB-backed users).
 - `config/security.php` - global IP blocklist (exact IP addresses or IPv4 CIDR ranges).

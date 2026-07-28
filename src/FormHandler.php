@@ -21,7 +21,8 @@ final class FormHandler
         private readonly ?WebhookNotifierInterface $webhookNotifier = null,
         private readonly string $uploadDirectory = '',
         private readonly ?CaptchaVerifierInterface $captchaVerifier = null,
-        private readonly ?string $clientIp = null
+        private readonly ?string $clientIp = null,
+        private readonly bool $deferMail = false
     ) {
     }
 
@@ -130,20 +131,27 @@ final class FormHandler
             }
         }
 
-        $submissionId = $this->repository->create($formId, $fields, $ipHash);
+        $submissionId = $this->repository->create(
+            $formId,
+            $fields,
+            $ipHash,
+            $this->deferMail ? 'pending_mail' : 'received'
+        );
 
-        try {
-            $this->mailService->send(
-                (string) $config['recipient'],
-                (string) ($config['subject'] ?? 'New form submission'),
-                $fields
-            );
+        if (!$this->deferMail) {
+            try {
+                $this->mailService->send(
+                    (string) $config['recipient'],
+                    (string) ($config['subject'] ?? 'New form submission'),
+                    $fields
+                );
 
-            $this->repository->markSent($submissionId);
-        } catch (Throwable $exception) {
-            $this->repository->markFailed($submissionId, $exception->getMessage());
+                $this->repository->markSent($submissionId);
+            } catch (Throwable $exception) {
+                $this->repository->markFailed($submissionId, $exception->getMessage());
 
-            throw new RuntimeException('Unable to send the submission email.', 0, $exception);
+                throw new RuntimeException('Unable to send the submission email.', 0, $exception);
+            }
         }
 
         try {
@@ -159,7 +167,10 @@ final class FormHandler
 
         return [
             'status' => 200,
-            'body' => ['success' => true, 'message' => 'Submission sent successfully.'],
+            'body' => [
+                'success' => true,
+                'message' => $this->deferMail ? 'Submission accepted.' : 'Submission sent successfully.',
+            ],
             'redirect' => $config['success_redirect'] ?? null,
         ];
     }
@@ -291,7 +302,6 @@ final class FormHandler
                 continue;
             }
 
-            $this->validateUploadedFile($field, $file, $policy);
             $acceptedEntries[$field] = $file;
         }
 
@@ -300,6 +310,7 @@ final class FormHandler
         }
 
         foreach ($acceptedEntries as $field => $file) {
+            $this->validateUploadedFile($field, $file, $policy);
             $this->storeUploadedFile($field, $file, $stored);
         }
 
@@ -353,9 +364,65 @@ final class FormHandler
 
         $extension = strtolower((string) pathinfo($file['name'], PATHINFO_EXTENSION));
         $allowedExtensions = $policy['allowed_extensions'];
+        $dangerousExtensions = [
+            'bat',
+            'cmd',
+            'com',
+            'exe',
+            'js',
+            'msi',
+            'phtml',
+            'php',
+            'phar',
+            'ps1',
+            'sh',
+            'vbs',
+        ];
+
+        if (in_array($extension, $dangerousExtensions, true)) {
+            throw new InvalidArgumentException(sprintf('Upload "%s" has an unsupported file type.', $field));
+        }
 
         if (is_array($allowedExtensions) && $allowedExtensions !== [] && !in_array($extension, $allowedExtensions, true)) {
             throw new InvalidArgumentException(sprintf('Upload "%s" has an unsupported file type.', $field));
+        }
+
+        $this->validateUploadedMimeType($field, $file, $extension);
+    }
+
+    /** @param array{name: string, tmp_name: string, error: int, size: int} $file */
+    private function validateUploadedMimeType(string $field, array $file, string $extension): void
+    {
+        if (!is_file($file['tmp_name']) || !function_exists('finfo_open')) {
+            return;
+        }
+
+        $expected = [
+            'csv' => ['text/csv', 'text/plain'],
+            'gif' => ['image/gif'],
+            'jpg' => ['image/jpeg'],
+            'jpeg' => ['image/jpeg'],
+            'json' => ['application/json', 'text/plain'],
+            'pdf' => ['application/pdf'],
+            'png' => ['image/png'],
+            'txt' => ['text/plain'],
+            'webp' => ['image/webp'],
+        ][$extension] ?? null;
+
+        if ($expected === null) {
+            return;
+        }
+
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+
+        if ($finfo === false) {
+            return;
+        }
+
+        $mimeType = finfo_file($finfo, $file['tmp_name']);
+
+        if (!is_string($mimeType) || !in_array($mimeType, $expected, true)) {
+            throw new InvalidArgumentException(sprintf('Upload "%s" has an unsupported MIME type.', $field));
         }
     }
 

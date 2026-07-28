@@ -40,9 +40,15 @@ function requestIsHttps(): bool
 
 function clientIpResolver(array $security): ClientIpResolver
 {
+    $trustedHeaders = $security['trusted_ip_headers'] ?? [
+        'HTTP_CF_CONNECTING_IP',
+        'HTTP_X_FORWARDED_FOR',
+        'HTTP_X_REAL_IP',
+    ];
+
     return new ClientIpResolver(
         array_values(array_filter(array_map('strval', $security['trusted_proxies'] ?? []))),
-        array_values(array_filter(array_map('strval', $security['trusted_ip_headers'] ?? [])))
+        array_values(array_filter(array_map('strval', $trustedHeaders)))
     );
 }
 
@@ -377,7 +383,8 @@ try {
             'friendly_captcha_api_key' => getenv('FRIENDLY_CAPTCHA_API_KEY') ?: '',
             'friendly_captcha_site_key' => getenv('FRIENDLY_CAPTCHA_SITE_KEY') ?: '',
         ]),
-        $clientIp
+        $clientIp,
+        (getenv('MAIL_DELIVERY_MODE') ?: 'sync') === 'queue'
     );
 
     $result = $handler->handle($formId);

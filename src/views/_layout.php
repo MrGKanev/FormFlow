@@ -13,6 +13,7 @@ $navItems = [
     '/admin/forms' => 'Forms',
     '/admin/delivery' => 'Delivery',
     '/admin/settings' => 'Settings',
+    '/admin/system' => 'System',
 ];
 
 $isActive = static function (string $href) use ($currentPath): bool {
