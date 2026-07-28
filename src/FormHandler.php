@@ -19,7 +19,9 @@ final class FormHandler
         private readonly string $ipHashSecret,
         private readonly FormApiKeyRepositoryInterface $apiKeys,
         private readonly ?WebhookNotifierInterface $webhookNotifier = null,
-        private readonly string $uploadDirectory = ''
+        private readonly string $uploadDirectory = '',
+        private readonly ?CaptchaVerifierInterface $captchaVerifier = null,
+        private readonly ?string $clientIp = null
     ) {
     }
 
@@ -112,13 +114,18 @@ final class FormHandler
             ];
         }
 
-        if (($config['turnstile'] ?? false) === true) {
-            $token = (string) ($_POST['cf-turnstile-response'] ?? '');
+        $captchaProvider = $this->captchaProvider($config);
 
-            if (!$this->turnstile->verify($token, $this->clientIp())) {
+        if ($captchaProvider !== 'none') {
+            $token = (string) ($_POST[$this->captchaResponseField($captchaProvider)] ?? '');
+            $verified = $captchaProvider === 'turnstile'
+                ? $this->turnstile->verify($token, $this->clientIp())
+                : ($this->captchaVerifier?->verify($captchaProvider, $token, $this->clientIp()) ?? false);
+
+            if (!$verified) {
                 return [
                     'status' => 422,
-                    'body' => ['success' => false, 'message' => 'Turnstile validation failed.'],
+                    'body' => ['success' => false, 'message' => 'CAPTCHA validation failed.'],
                 ];
             }
         }
@@ -143,7 +150,10 @@ final class FormHandler
             $channels = array_key_exists('notification_channels', $config)
                 ? (array) $config['notification_channels']
                 : null;
-            $this->webhookNotifier?->notify($formId, $fields, $channels);
+            $overrides = is_array($config['notification_overrides'] ?? null)
+                ? $config['notification_overrides']
+                : [];
+            $this->webhookNotifier?->notify($formId, $fields, $channels, $overrides);
         } catch (Throwable) {
         }
 
@@ -202,6 +212,30 @@ final class FormHandler
         if (!hash_equals($expectedKey, $providedKey)) {
             throw new InvalidArgumentException('Invalid API key.');
         }
+    }
+
+    private function captchaProvider(array $config): string
+    {
+        $provider = (string) ($config['captcha_provider'] ?? '');
+
+        if ($provider === '' && ($config['turnstile'] ?? false) === true) {
+            $provider = 'turnstile';
+        }
+
+        return in_array($provider, ['turnstile', 'hcaptcha', 'recaptcha', 'friendlycaptcha'], true)
+            ? $provider
+            : 'none';
+    }
+
+    private function captchaResponseField(string $provider): string
+    {
+        return match ($provider) {
+            'turnstile' => 'cf-turnstile-response',
+            'hcaptcha' => 'h-captcha-response',
+            'recaptcha' => 'g-recaptcha-response',
+            'friendlycaptcha' => 'frc-captcha-response',
+            default => '',
+        };
     }
 
     private function extractFields(array $input): array
@@ -344,7 +378,15 @@ final class FormHandler
 
     private function isSystemField(string $field): bool
     {
-        return in_array($field, ['_key', '_website', 'cf-turnstile-response', 'csrf_token'], true);
+        return in_array($field, [
+            '_key',
+            '_website',
+            'cf-turnstile-response',
+            'h-captcha-response',
+            'g-recaptcha-response',
+            'frc-captcha-response',
+            'csrf_token',
+        ], true);
     }
 
     private function validateEmailField(array $fields): void
@@ -360,6 +402,10 @@ final class FormHandler
 
     private function clientIp(): ?string
     {
+        if ($this->clientIp !== null && $this->clientIp !== '') {
+            return $this->clientIp;
+        }
+
         $ip = $_SERVER['REMOTE_ADDR'] ?? null;
 
         return is_string($ip) && $ip !== '' ? $ip : null;

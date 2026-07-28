@@ -1,0 +1,11 @@
+services:
+  formflow:
+    build: .
+    ports:
+      - "8080:80"
+    env_file:
+      - .env
+    volumes:
+      - ./storage:/var/www/html/storage
+      - ./.env:/var/www/html/.env:ro
+    restart: unless-stopped

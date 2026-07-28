@@ -5,9 +5,12 @@ declare(strict_types=1);
 use formflow\Admin\AdminController;
 use formflow\AdminAuth;
 use formflow\AdminIpWhitelist;
+use formflow\CurlCaptchaVerifier;
 use formflow\CurlWebhookNotifier;
+use formflow\ClientIpResolver;
 use formflow\SqliteWebhookDeliveryRepository;
 use formflow\FormHandler;
+use formflow\HttpSecurity;
 use formflow\Install\InstallController;
 use formflow\IpBlocklist;
 use formflow\MailService;
@@ -28,6 +31,23 @@ $root = dirname(__DIR__);
 if (is_file($root . '/.env')) {
     (new Dotenv())->usePutenv()->load($root . '/.env');
 }
+
+function requestIsHttps(): bool
+{
+    return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? null) === 'https');
+}
+
+function clientIpResolver(array $security): ClientIpResolver
+{
+    return new ClientIpResolver(
+        array_values(array_filter(array_map('strval', $security['trusted_proxies'] ?? []))),
+        array_values(array_filter(array_map('strval', $security['trusted_ip_headers'] ?? [])))
+    );
+}
+
+HttpSecurity::hardenSessionCookies(requestIsHttps());
+HttpSecurity::sendHeaders(requestIsHttps());
 
 function wantsJsonResponse(): bool
 {
@@ -196,7 +216,7 @@ if ($formId === '') {
         <section class="home-hero">
             <p class="home-kicker">Self-hosted form backend</p>
             <h1>formflow</h1>
-            <p class="tagline">A clean endpoint for static-site forms with spam controls, rate limits, delivery logs, and per-form API keys.</p>
+            <p class="tagline">A clean endpoint for static-site forms with selectable CAPTCHA providers, per-form integrations, delivery logs, upload rules, and admin controls.</p>
             <div class="home-actions">
     HTML;
 
@@ -210,9 +230,12 @@ if ($formId === '') {
             </div>
         </section>
         <ul class="features">
-            <li><strong>Spam control</strong>Turnstile, honeypot checks, keyword filtering, and a global IP blocklist.</li>
-            <li><strong>Rate limits</strong>Per-IP and per-form limits keep noisy forms contained.</li>
-            <li><strong>Admin workflow</strong>Review submissions and copy each form's ready-to-use integration snippet.</li>
+            <li><strong>Selectable CAPTCHA</strong>Use Turnstile, hCaptcha, reCAPTCHA v2, Friendly Captcha, or no CAPTCHA per form.</li>
+            <li><strong>Per-form delivery</strong>Route submissions to email, Discord, Slack, Telegram, or custom webhooks with form-specific overrides.</li>
+            <li><strong>Spam controls</strong>Honeypot checks, keyword filtering, allowed origins, daily caps, and a global IP blocklist.</li>
+            <li><strong>Rate limits</strong>Per-IP and per-form limits keep noisy endpoints contained without extra services.</li>
+            <li><strong>Admin workflow</strong>Review, resend, delete, export, and copy each form's ready-to-use integration snippet.</li>
+            <li><strong>Operational extras</strong>Delivery logs, audit log, backups, config import/export, admin users, and IP whitelist controls.</li>
         </ul>
     </main>
     </body>
@@ -247,6 +270,8 @@ $ipHashSecret = getenv('IP_HASH_SECRET') ?: 'change-me';
 $configuredForms = require $root . '/config/forms.php';
 $formRepository = new SqliteFormRepository($databasePath);
 $forms = array_merge($configuredForms, $formRepository->all());
+$security = require $root . '/config/security.php';
+$clientIp = clientIpResolver($security)->resolve($_SERVER);
 
 if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
     $adminConfig = require $root . '/config/admin.php';
@@ -286,7 +311,8 @@ if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
         $adminUsers,
         $auditLog,
         $mailService,
-        $webhookDeliveries
+        $webhookDeliveries,
+        $clientIp
     );
 
     $result = $adminController->handle($formId);
@@ -310,10 +336,7 @@ if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
     exit;
 }
 
-$security = require $root . '/config/security.php';
 $blocklist = new IpBlocklist($security['blocked_ips'] ?? []);
-
-$clientIp = $_SERVER['REMOTE_ADDR'] ?? null;
 
 if (is_string($clientIp) && $blocklist->isBlocked($clientIp)) {
     http_response_code(403);
@@ -343,9 +366,18 @@ try {
             getenv('GENERIC_WEBHOOK_URL') ?: null,
             getenv('TELEGRAM_BOT_TOKEN') ?: null,
             getenv('TELEGRAM_CHAT_ID') ?: null,
-            new SqliteWebhookDeliveryRepository($databasePath)
+            new SqliteWebhookDeliveryRepository($databasePath),
+            null,
+            (getenv('WEBHOOK_DELIVERY_MODE') ?: 'sync') === 'queue'
         ),
-        $root . '/storage/uploads'
+        $root . '/storage/uploads',
+        new CurlCaptchaVerifier([
+            'hcaptcha_secret' => getenv('HCAPTCHA_SECRET') ?: '',
+            'recaptcha_secret' => getenv('RECAPTCHA_SECRET') ?: '',
+            'friendly_captcha_api_key' => getenv('FRIENDLY_CAPTCHA_API_KEY') ?: '',
+            'friendly_captcha_site_key' => getenv('FRIENDLY_CAPTCHA_SITE_KEY') ?: '',
+        ]),
+        $clientIp
     );
 
     $result = $handler->handle($formId);

@@ -17,26 +17,32 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
         private readonly ?string $telegramBotToken = null,
         private readonly ?string $telegramChatId = null,
         private readonly ?WebhookDeliveryRepositoryInterface $deliveries = null,
-        ?WebhookTransportInterface $transport = null
+        ?WebhookTransportInterface $transport = null,
+        private readonly bool $defer = false
     ) {
         $this->transport = $transport ?? new CurlWebhookTransport();
     }
 
-    public function notify(string $formId, array $fields, ?array $channels = null): void
+    public function notify(string $formId, array $fields, ?array $channels = null, array $overrides = []): void
     {
         $summary = $this->summary($formId, $fields);
         $selectedChannels = $channels === null ? null : array_flip($channels);
+        $discordUrl = $this->overrideValue($overrides, 'discord_webhook_url') ?? $this->discordUrl;
+        $slackUrl = $this->overrideValue($overrides, 'slack_webhook_url') ?? $this->slackUrl;
+        $genericWebhookUrl = $this->overrideValue($overrides, 'generic_webhook_url') ?? $this->genericWebhookUrl;
+        $telegramBotToken = $this->overrideValue($overrides, 'telegram_bot_token') ?? $this->telegramBotToken;
+        $telegramChatId = $this->overrideValue($overrides, 'telegram_chat_id') ?? $this->telegramChatId;
 
-        if ($this->isSelected('discord', $selectedChannels) && $this->hasValue($this->discordUrl)) {
-            $this->deliver($formId, 'discord', $this->discordUrl, ['content' => $summary]);
+        if ($this->isSelected('discord', $selectedChannels) && $this->hasValue($discordUrl)) {
+            $this->deliver($formId, 'discord', $discordUrl, ['content' => $summary]);
         }
 
-        if ($this->isSelected('slack', $selectedChannels) && $this->hasValue($this->slackUrl)) {
-            $this->deliver($formId, 'slack', $this->slackUrl, ['text' => $summary]);
+        if ($this->isSelected('slack', $selectedChannels) && $this->hasValue($slackUrl)) {
+            $this->deliver($formId, 'slack', $slackUrl, ['text' => $summary]);
         }
 
-        if ($this->isSelected('generic', $selectedChannels) && $this->hasValue($this->genericWebhookUrl)) {
-            $this->deliver($formId, 'generic', $this->genericWebhookUrl, [
+        if ($this->isSelected('generic', $selectedChannels) && $this->hasValue($genericWebhookUrl)) {
+            $this->deliver($formId, 'generic', $genericWebhookUrl, [
                 'form_id' => $formId,
                 'fields' => $fields,
             ]);
@@ -45,16 +51,16 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
         if (
             $this->isSelected('telegram', $selectedChannels)
             &&
-            $this->telegramBotToken !== null
-            && $this->telegramBotToken !== ''
-            && $this->telegramChatId !== null
-            && $this->telegramChatId !== ''
+            $telegramBotToken !== null
+            && $telegramBotToken !== ''
+            && $telegramChatId !== null
+            && $telegramChatId !== ''
         ) {
             $this->deliver(
                 $formId,
                 'telegram',
-                'https://api.telegram.org/bot' . rawurlencode($this->telegramBotToken) . '/sendMessage',
-                ['chat_id' => $this->telegramChatId, 'text' => $summary]
+                'https://api.telegram.org/bot' . rawurlencode($telegramBotToken) . '/sendMessage',
+                ['chat_id' => $telegramChatId, 'text' => $summary]
             );
         }
     }
@@ -82,9 +88,22 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
         return $value !== null && $value !== '';
     }
 
+    /** @param array<string, mixed> $overrides */
+    private function overrideValue(array $overrides, string $key): ?string
+    {
+        $value = trim((string) ($overrides[$key] ?? ''));
+
+        return $value !== '' ? $value : null;
+    }
+
     /** @param array<string, string|array<string, string>> $payload */
     private function deliver(string $formId, string $channel, string $url, array $payload): void
     {
+        if ($this->defer) {
+            $this->deliveries?->enqueue($formId, $channel, $url, $payload);
+            return;
+        }
+
         $error = null;
 
         for ($attempt = 1; $attempt <= self::MAX_ATTEMPTS; $attempt++) {

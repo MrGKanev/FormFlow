@@ -2,15 +2,22 @@
 /** @var string|null $error */
 /** @var string $csrfToken */
 /** @var array<string, mixed> $values */
+/** @var array<string, mixed> $integrationSettings */
 $value = static fn (string $key, string $default = ''): string => htmlspecialchars(
     (string) ($values[$key] ?? $default),
     ENT_QUOTES,
     'UTF-8'
 );
-$checked = array_key_exists('turnstile', $values) || $values === [];
+$turnstileConfigured = (string) ($integrationSettings['turnstile_secret'] ?? '') !== ''
+    && (string) ($integrationSettings['turnstile_site_key'] ?? '') !== '';
+$captchaProvider = (string) ($values['captcha_provider'] ?? ($values === [] && $turnstileConfigured ? 'turnstile' : 'none'));
+$captchaSelected = static fn (string $provider): string => $captchaProvider === $provider ? ' selected' : '';
 $notificationChannels = is_array($values['notification_channels'] ?? null)
     ? $values['notification_channels']
-    : ['discord', 'slack', 'telegram', 'generic'];
+    : [];
+$globalStatus = static fn (string $key): string => (string) ($integrationSettings[$key] ?? '') !== ''
+    ? 'global configured'
+    : 'no global default';
 ?>
 <div class="page-header">
     <div>
@@ -62,9 +69,15 @@ $notificationChannels = is_array($values['notification_channels'] ?? null)
             <span>Daily limit</span>
             <input type="number" name="daily_limit" min="1" value="<?= $value('daily_limit', '200') ?>">
         </label>
-        <label class="checkbox-label">
-            <input type="checkbox" name="turnstile" value="1"<?= $checked ? ' checked' : '' ?>>
-            <span>Require Turnstile</span>
+        <label>
+            <span>CAPTCHA provider</span>
+            <select name="captcha_provider">
+                <option value="none"<?= $captchaSelected('none') ?>>None</option>
+                <option value="turnstile"<?= $captchaSelected('turnstile') ?>>Cloudflare Turnstile</option>
+                <option value="hcaptcha"<?= $captchaSelected('hcaptcha') ?>>hCaptcha</option>
+                <option value="recaptcha"<?= $captchaSelected('recaptcha') ?>>Google reCAPTCHA v2</option>
+                <option value="friendlycaptcha"<?= $captchaSelected('friendlycaptcha') ?>>Friendly Captcha</option>
+            </select>
         </label>
         <label class="checkbox-label">
             <input type="checkbox" name="require_api_key" value="1"<?= array_key_exists('require_api_key', $values) ? ' checked' : '' ?>>
@@ -89,12 +102,40 @@ $notificationChannels = is_array($values['notification_channels'] ?? null)
         <fieldset class="field-picker span-2">
             <legend>Send notifications to</legend>
             <p class="muted">Only enabled integrations are used. Configure their endpoints in Settings → Integrations.</p>
-            <?php foreach (['discord' => 'Discord', 'slack' => 'Slack', 'telegram' => 'Telegram', 'generic' => 'Generic webhook'] as $channel => $label): ?>
-                <label class="checkbox-label option-check">
-                    <input type="checkbox" name="notification_channels[]" value="<?= $channel ?>"<?= in_array($channel, $notificationChannels, true) ? ' checked' : '' ?>>
-                    <span><?= $label ?></span>
+            <div class="option-grid">
+                <?php foreach (['discord' => 'Discord', 'slack' => 'Slack', 'telegram' => 'Telegram', 'generic' => 'Generic webhook'] as $channel => $label): ?>
+                    <label class="checkbox-label option-check">
+                        <input type="checkbox" name="notification_channels[]" value="<?= $channel ?>"<?= in_array($channel, $notificationChannels, true) ? ' checked' : '' ?>>
+                        <span><?= $label ?></span>
+                    </label>
+                <?php endforeach; ?>
+            </div>
+        </fieldset>
+        <fieldset class="field-picker span-2">
+            <legend>Per-form integration overrides</legend>
+            <p class="muted">Leave blank to use the global endpoint for a selected channel.</p>
+            <div class="form-grid">
+                <label>
+                    <span>Discord webhook URL <small><?= $globalStatus('discord_webhook_url') ?></small></span>
+                    <input type="url" name="discord_webhook_url" value="<?= $value('discord_webhook_url') ?>" placeholder="https://discord.com/api/webhooks/...">
                 </label>
-            <?php endforeach; ?>
+                <label>
+                    <span>Slack webhook URL <small><?= $globalStatus('slack_webhook_url') ?></small></span>
+                    <input type="url" name="slack_webhook_url" value="<?= $value('slack_webhook_url') ?>" placeholder="https://hooks.slack.com/services/...">
+                </label>
+                <label>
+                    <span>Generic webhook URL <small><?= $globalStatus('generic_webhook_url') ?></small></span>
+                    <input type="url" name="generic_webhook_url" value="<?= $value('generic_webhook_url') ?>" placeholder="https://hooks.example.com/formflow">
+                </label>
+                <label>
+                    <span>Telegram bot token <small><?= $globalStatus('telegram_bot_token') ?></small></span>
+                    <input type="text" name="telegram_bot_token" value="<?= $value('telegram_bot_token') ?>">
+                </label>
+                <label>
+                    <span>Telegram chat ID <small><?= $globalStatus('telegram_chat_id') ?></small></span>
+                    <input type="text" name="telegram_chat_id" value="<?= $value('telegram_chat_id') ?>">
+                </label>
+            </div>
         </fieldset>
     </div>
 

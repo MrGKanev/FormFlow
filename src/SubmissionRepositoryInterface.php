@@ -51,6 +51,9 @@ interface SubmissionRepositoryInterface
     public function findByIds(array $ids): array;
 
     /** @return list<array<string, mixed>> */
+    public function findFailed(int $limit = 100): array;
+
+    /** @return list<array<string, mixed>> */
     public function deliveryLog(int $limit = 100): array;
 
     /** @return list<array<string, mixed>> */

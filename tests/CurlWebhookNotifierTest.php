@@ -46,6 +46,19 @@ final class CurlWebhookNotifierTest extends TestCase
         ], array_column($transport->requests, 'url'));
     }
 
+    public function testPerFormOverridesReplaceGlobalEndpoints(): void
+    {
+        $transport = new FakeWebhookTransport();
+        $notifier = $this->notifier(new SqliteWebhookDeliveryRepository(':memory:'), $transport);
+
+        $notifier->notify('contact', ['email' => 'ada@example.com'], ['slack'], [
+            'slack_webhook_url' => 'https://hooks.slack.test/form-specific',
+        ]);
+
+        $this->assertCount(1, $transport->requests);
+        $this->assertSame('https://hooks.slack.test/form-specific', $transport->requests[0]['url']);
+    }
+
     public function testRetriesAndRecordsTheAttemptThatSucceeds(): void
     {
         $transport = new FakeWebhookTransport(['Temporary failure.', null]);
@@ -90,6 +103,28 @@ final class CurlWebhookNotifierTest extends TestCase
         $this->assertSame('failed', $entry['status']);
         $this->assertSame(3, $entry['attempts']);
         $this->assertSame('HTTP 500.', $entry['error_message']);
+    }
+
+    public function testQueueModeStoresDeliveryWithoutCallingTransport(): void
+    {
+        $transport = new FakeWebhookTransport();
+        $deliveries = new SqliteWebhookDeliveryRepository(':memory:');
+        $notifier = new CurlWebhookNotifier(
+            null,
+            'https://hooks.slack.test/incoming',
+            null,
+            null,
+            null,
+            $deliveries,
+            $transport,
+            true
+        );
+
+        $notifier->notify('contact', ['name' => 'Ada'], ['slack']);
+
+        $this->assertCount(0, $transport->requests);
+        $this->assertCount(1, $deliveries->due());
+        $this->assertSame('pending', $deliveries->deliveryLog()[0]['status']);
     }
 
     private function notifier(

@@ -181,6 +181,9 @@ final class InstallControllerTest extends TestCase
         $this->assertStringContainsString("SMTP_ENCRYPTION='tls'", $env);
         $this->assertStringContainsString("MAIL_FROM=''", $env);
         $this->assertStringContainsString("TURNSTILE_SECRET=''", $env);
+        $this->assertStringContainsString("HCAPTCHA_SECRET=''", $env);
+        $this->assertStringContainsString("RECAPTCHA_SECRET=''", $env);
+        $this->assertStringContainsString("FRIENDLY_CAPTCHA_API_KEY=''", $env);
         $this->assertStringContainsString("MAIL_FROM_NAME='formflow'", $env);
         $this->assertStringContainsString("ADMIN_USERNAME='admin'", $env);
     }

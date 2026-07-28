@@ -4,9 +4,46 @@
 /** @var list<string> $dynamicFormIds */
 /** @var array<string, array<string, mixed>> $apiKeys */
 /** @var string $appUrl */
-/** @var string $turnstileSiteKey */
+/** @var array<string, string> $captchaSiteKeys */
 /** @var string $csrfToken */
 /** @var array<string, mixed> $values */
+$captchaProvider = static function (array $config): string {
+    $provider = (string) ($config['captcha_provider'] ?? '');
+
+    if ($provider === '' && !empty($config['turnstile'])) {
+        $provider = 'turnstile';
+    }
+
+    return in_array($provider, ['turnstile', 'hcaptcha', 'recaptcha', 'friendlycaptcha'], true)
+        ? $provider
+        : 'none';
+};
+$captchaSnippet = static function (string $provider, string $siteKey): array {
+    if ($siteKey === '') {
+        return ['', ''];
+    }
+
+    return match ($provider) {
+        'turnstile' => [
+            '  <div class="cf-turnstile" data-sitekey="' . $siteKey . '"></div>' . PHP_EOL,
+            PHP_EOL . '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>',
+        ],
+        'hcaptcha' => [
+            '  <div class="h-captcha" data-sitekey="' . $siteKey . '"></div>' . PHP_EOL,
+            PHP_EOL . '<script src="https://js.hcaptcha.com/1/api.js" async defer></script>',
+        ],
+        'recaptcha' => [
+            '  <div class="g-recaptcha" data-sitekey="' . $siteKey . '"></div>' . PHP_EOL,
+            PHP_EOL . '<script src="https://www.google.com/recaptcha/api.js" async defer></script>',
+        ],
+        'friendlycaptcha' => [
+            '  <div class="frc-captcha" data-sitekey="' . $siteKey . '"></div>' . PHP_EOL,
+            PHP_EOL . '<script type="module" src="https://cdn.jsdelivr.net/npm/@friendlycaptcha/sdk/site.min.js" async defer></script>' . PHP_EOL
+                . '<script nomodule src="https://cdn.jsdelivr.net/npm/@friendlycaptcha/sdk/site.compat.min.js" async defer></script>',
+        ],
+        default => ['', ''],
+    };
+};
 ?>
 <div class="page-header">
     <div>
@@ -37,15 +74,17 @@
                 $endpoint = '/' . rawurlencode((string) $formId);
             }
             $apiKey = $apiKeys[$formId]['api_key'] ?? '';
+            $provider = $captchaProvider($config);
+            [$captchaMarkup, $captchaScript] = $captchaSnippet($provider, $captchaSiteKeys[$provider] ?? '');
             $snippet = '<form method="POST" action="' . $endpoint . '" enctype="multipart/form-data">' . PHP_EOL
                 . '  <input type="hidden" name="_key" value="' . $apiKey . '">' . PHP_EOL
                 . '  <input type="text" name="_website" tabindex="-1" autocomplete="off" hidden>' . PHP_EOL
                 . '  <input type="email" name="email">' . PHP_EOL
                 . '  <textarea name="message"></textarea>' . PHP_EOL
                 . '  <input type="file" name="attachment">' . PHP_EOL
-                . (!empty($config['turnstile']) && $turnstileSiteKey !== '' ? '  <div class="cf-turnstile" data-sitekey="' . $turnstileSiteKey . '"></div>' . PHP_EOL : '')
+                . $captchaMarkup
                 . '  <button type="submit">Send</button>' . PHP_EOL
-                . '</form>' . (!empty($config['turnstile']) && $turnstileSiteKey !== '' ? PHP_EOL . '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : '');
+                . '</form>' . $captchaScript;
             ?>
             <li>
                 <strong><?= htmlspecialchars($formId, ENT_QUOTES, 'UTF-8') ?></strong>

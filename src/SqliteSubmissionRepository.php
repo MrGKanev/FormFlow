@@ -202,6 +202,21 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         return $statement->fetchAll();
     }
 
+    public function findFailed(int $limit = 100): array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT * FROM submissions
+             WHERE status = :status
+             ORDER BY created_at ASC, id ASC
+             LIMIT :limit'
+        );
+        $statement->bindValue(':status', 'failed', PDO::PARAM_STR);
+        $statement->bindValue(':limit', max(1, $limit), PDO::PARAM_INT);
+        $statement->execute();
+
+        return $statement->fetchAll();
+    }
+
     public function deliveryLog(int $limit = 100): array
     {
         $statement = $this->pdo->prepare(

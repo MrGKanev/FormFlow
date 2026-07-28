@@ -509,9 +509,17 @@ select:focus {
     font-weight: 650;
 }
 
+.field-picker small {
+    display: block;
+    margin-top: 0.12rem;
+    color: var(--muted);
+    font-size: 0.76rem;
+    font-weight: 500;
+}
+
 .option-grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.5rem;
 }
 

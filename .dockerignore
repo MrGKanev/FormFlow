@@ -1,0 +1,10 @@
+.git
+.env
+.phpunit.result.cache
+vendor
+storage/*.sqlite
+storage/*.sqlite-*
+storage/uploads/*
+docs/superpowers
+.superpowers
+.remember

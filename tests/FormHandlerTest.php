@@ -9,6 +9,7 @@ use formflow\FormHandler;
 use formflow\SqliteFormApiKeyRepository;
 use formflow\SqliteRateLimiter;
 use formflow\SqliteSubmissionRepository;
+use formflow\Tests\Fakes\FakeCaptchaVerifier;
 use formflow\Tests\Fakes\FakeMailSender;
 use formflow\Tests\Fakes\FakeTurnstileVerifier;
 use formflow\Tests\Fakes\FakeWebhookNotifier;
@@ -61,7 +62,8 @@ final class FormHandlerTest extends TestCase
         ?SqliteRateLimiter $rateLimiter = null,
         ?FormApiKeyRepositoryInterface $apiKeys = null,
         string $uploadDirectory = '',
-        ?WebhookNotifierInterface $webhookNotifier = null
+        ?WebhookNotifierInterface $webhookNotifier = null,
+        ?FakeCaptchaVerifier $captchaVerifier = null
     ): FormHandler {
         return new FormHandler(
             $forms,
@@ -72,7 +74,8 @@ final class FormHandlerTest extends TestCase
             'test-secret',
             $apiKeys ?? new SqliteFormApiKeyRepository(':memory:'),
             $webhookNotifier,
-            $uploadDirectory
+            $uploadDirectory,
+            $captchaVerifier
         );
     }
 
@@ -241,6 +244,28 @@ final class FormHandlerTest extends TestCase
         $this->assertSame(['slack'], $notifier->notifications[0]['channels']);
     }
 
+    public function testPassesPerFormNotificationOverridesToWebhookNotifier(): void
+    {
+        $_POST = ['email' => 'ada@example.com'];
+        $notifier = new FakeWebhookNotifier();
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm([
+                'turnstile' => false,
+                'notification_channels' => ['slack'],
+                'notification_overrides' => [
+                    'slack_webhook_url' => 'https://hooks.slack.test/form-specific',
+                ],
+            ])],
+            webhookNotifier: $notifier
+        );
+
+        $handler->handle('contact');
+
+        $this->assertSame([
+            'slack_webhook_url' => 'https://hooks.slack.test/form-specific',
+        ], $notifier->notifications[0]['overrides']);
+    }
+
     public function testPassesNullChannelsForLegacyFormConfigurations(): void
     {
         $_POST = ['email' => 'ada@example.com'];
@@ -348,6 +373,54 @@ final class FormHandlerTest extends TestCase
 
         $this->assertSame(422, $result['status']);
         $this->assertFalse($result['body']['success']);
+    }
+
+    public function testConfiguredCaptchaProviderUsesMatchingResponseField(): void
+    {
+        $_POST = [
+            'name' => 'Ada',
+            'email' => 'ada@example.com',
+            'message' => 'Hello',
+            'h-captcha-response' => 'hcaptcha-token',
+        ];
+
+        $mailSender = new FakeMailSender();
+        $captchaVerifier = new FakeCaptchaVerifier(true);
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm(['captcha_provider' => 'hcaptcha', 'turnstile' => false])],
+            $mailSender,
+            captchaVerifier: $captchaVerifier
+        );
+
+        $result = $handler->handle('contact');
+
+        $this->assertSame(200, $result['status']);
+        $this->assertSame([
+            'provider' => 'hcaptcha',
+            'token' => 'hcaptcha-token',
+            'remote_ip' => '198.51.100.10',
+        ], $captchaVerifier->verifications[0]);
+        $this->assertArrayNotHasKey('h-captcha-response', $mailSender->sentMessages[0]['fields']);
+    }
+
+    public function testConfiguredCaptchaProviderRejectsFailedVerification(): void
+    {
+        $_POST = [
+            'name' => 'Ada',
+            'email' => 'ada@example.com',
+            'message' => 'Hello',
+            'g-recaptcha-response' => 'recaptcha-token',
+        ];
+
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm(['captcha_provider' => 'recaptcha', 'turnstile' => false])],
+            captchaVerifier: new FakeCaptchaVerifier(false)
+        );
+
+        $result = $handler->handle('contact');
+
+        $this->assertSame(422, $result['status']);
+        $this->assertSame('CAPTCHA validation failed.', $result['body']['message']);
     }
 
     public function testSuccessfulSubmissionSendsEmailAndStoresSent(): void

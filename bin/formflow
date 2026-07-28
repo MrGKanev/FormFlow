@@ -1,0 +1,133 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use formflow\CurlWebhookTransport;
+use formflow\MailFailureRetrier;
+use formflow\MailService;
+use formflow\SqliteFormRepository;
+use formflow\SqliteSubmissionRepository;
+use formflow\SqliteWebhookDeliveryRepository;
+use formflow\WebhookDeliveryWorker;
+use Symfony\Component\Dotenv\Dotenv;
+
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+$root = dirname(__DIR__);
+
+if (is_file($root . '/.env')) {
+    (new Dotenv())->usePutenv()->load($root . '/.env');
+}
+
+function cliDatabasePath(string $root): string
+{
+    $databasePath = getenv('DATABASE_PATH') ?: 'storage/submissions.sqlite';
+
+    if (!str_starts_with($databasePath, '/')) {
+        $databasePath = $root . '/' . ltrim($databasePath, '/');
+    }
+
+    return $databasePath;
+}
+
+function cliMailerDsnFromEnv(): string
+{
+    $advancedDsn = trim((string) (getenv('MAILER_DSN') ?: ''));
+
+    if ($advancedDsn !== '') {
+        return $advancedDsn;
+    }
+
+    $host = trim((string) (getenv('SMTP_HOST') ?: ''));
+
+    if ($host === '') {
+        return 'null://null';
+    }
+
+    $port = (int) (getenv('SMTP_PORT') ?: 587);
+    $encryption = strtolower(trim((string) (getenv('SMTP_ENCRYPTION') ?: 'tls')));
+    $scheme = $encryption === 'ssl' ? 'smtps' : 'smtp';
+    $username = (string) (getenv('SMTP_USERNAME') ?: '');
+    $password = (string) (getenv('SMTP_PASSWORD') ?: '');
+    $auth = $username !== ''
+        ? rawurlencode($username) . ':' . rawurlencode($password) . '@'
+        : '';
+    $query = $encryption === 'none' ? '?auto_tls=0' : ($encryption === 'tls' ? '?require_tls=1' : '');
+
+    return sprintf('%s://%s%s:%d%s', $scheme, $auth, $host, $port, $query);
+}
+
+/** @param list<string> $argv */
+function cliOption(array $argv, string $name, string $default): string
+{
+    $prefix = '--' . $name . '=';
+
+    foreach ($argv as $arg) {
+        if (str_starts_with($arg, $prefix)) {
+            return substr($arg, strlen($prefix));
+        }
+    }
+
+    return $default;
+}
+
+function cliUsage(): void
+{
+    fwrite(STDERR, "Usage:\n");
+    fwrite(STDERR, "  php bin/formflow retention:prune [--days=180]\n");
+    fwrite(STDERR, "  php bin/formflow mail:retry-failed [--limit=100]\n");
+    fwrite(STDERR, "  php bin/formflow webhooks:retry [--limit=100]\n");
+}
+
+$command = $argv[1] ?? '';
+$databasePath = cliDatabasePath($root);
+
+if ($command === 'retention:prune') {
+    $days = max(1, (int) cliOption($argv, 'days', (string) (getenv('RETENTION_DAYS') ?: '180')));
+    $deleted = (new SqliteSubmissionRepository($databasePath))->deleteOlderThan($days);
+    echo 'Deleted ' . $deleted . ' submissions older than ' . $days . ' days.' . PHP_EOL;
+    exit(0);
+}
+
+if ($command === 'mail:retry-failed') {
+    $configuredForms = require $root . '/config/forms.php';
+    $forms = array_merge($configuredForms, (new SqliteFormRepository($databasePath))->all());
+    $summary = (new MailFailureRetrier(
+        $forms,
+        new MailService(
+            cliMailerDsnFromEnv(),
+            getenv('MAIL_FROM') ?: '',
+            getenv('MAIL_FROM_NAME') ?: 'formflow'
+        ),
+        new SqliteSubmissionRepository($databasePath)
+    ))->process((int) cliOption($argv, 'limit', '100'));
+
+    echo sprintf(
+        "Mail retry attempted=%d sent=%d failed=%d skipped=%d\n",
+        $summary['attempted'],
+        $summary['sent'],
+        $summary['failed'],
+        $summary['skipped']
+    );
+    exit($summary['failed'] > 0 ? 1 : 0);
+}
+
+if ($command === 'webhooks:retry') {
+    $summary = (new WebhookDeliveryWorker(
+        new SqliteWebhookDeliveryRepository($databasePath),
+        new CurlWebhookTransport()
+    ))->process((int) cliOption($argv, 'limit', '100'));
+
+    echo sprintf(
+        "Webhook retry attempted=%d sent=%d failed=%d pending=%d\n",
+        $summary['attempted'],
+        $summary['sent'],
+        $summary['failed'],
+        $summary['pending']
+    );
+    exit($summary['failed'] > 0 ? 1 : 0);
+}
+
+cliUsage();
+exit(2);

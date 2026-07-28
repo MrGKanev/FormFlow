@@ -39,7 +39,8 @@ final class AdminController
         private readonly ?AdminUserRepositoryInterface $adminUsers = null,
         private readonly ?AuditLogRepositoryInterface $auditLog = null,
         private readonly ?MailSenderInterface $mailSender = null,
-        private readonly ?WebhookDeliveryRepositoryInterface $webhookDeliveries = null
+        private readonly ?WebhookDeliveryRepositoryInterface $webhookDeliveries = null,
+        private readonly ?string $clientIp = null
     ) {
     }
 
@@ -592,7 +593,12 @@ final class AdminController
             'dynamicFormIds' => array_keys($this->formRepository->all()),
             'apiKeys' => $this->apiKeys->all(),
             'appUrl' => trim((string) ($settings['app_url'] ?? '')),
-            'turnstileSiteKey' => (string) ($settings['turnstile_site_key'] ?? ''),
+            'captchaSiteKeys' => [
+                'turnstile' => (string) ($settings['turnstile_site_key'] ?? ''),
+                'hcaptcha' => (string) ($settings['hcaptcha_site_key'] ?? ''),
+                'recaptcha' => (string) ($settings['recaptcha_site_key'] ?? ''),
+                'friendlycaptcha' => (string) ($settings['friendly_captcha_site_key'] ?? ''),
+            ],
             'csrfToken' => $_SESSION['csrf_token'],
             'values' => $values,
         ], 'Forms');
@@ -605,6 +611,7 @@ final class AdminController
             'formId' => $formId,
             'csrfToken' => $_SESSION['csrf_token'],
             'values' => $values,
+            'integrationSettings' => $this->currentSettings(),
         ], 'Edit form');
     }
 
@@ -614,6 +621,7 @@ final class AdminController
             'error' => $error,
             'csrfToken' => $_SESSION['csrf_token'],
             'values' => $values,
+            'integrationSettings' => $this->currentSettings(),
         ], 'New form');
     }
 
@@ -784,6 +792,12 @@ final class AdminController
             'mail_from_name' => $env['MAIL_FROM_NAME'] ?? (getenv('MAIL_FROM_NAME') ?: 'formflow'),
             'turnstile_secret' => $env['TURNSTILE_SECRET'] ?? (getenv('TURNSTILE_SECRET') ?: ''),
             'turnstile_site_key' => $env['TURNSTILE_SITE_KEY'] ?? (getenv('TURNSTILE_SITE_KEY') ?: ''),
+            'hcaptcha_secret' => $env['HCAPTCHA_SECRET'] ?? (getenv('HCAPTCHA_SECRET') ?: ''),
+            'hcaptcha_site_key' => $env['HCAPTCHA_SITE_KEY'] ?? (getenv('HCAPTCHA_SITE_KEY') ?: ''),
+            'recaptcha_secret' => $env['RECAPTCHA_SECRET'] ?? (getenv('RECAPTCHA_SECRET') ?: ''),
+            'recaptcha_site_key' => $env['RECAPTCHA_SITE_KEY'] ?? (getenv('RECAPTCHA_SITE_KEY') ?: ''),
+            'friendly_captcha_api_key' => $env['FRIENDLY_CAPTCHA_API_KEY'] ?? (getenv('FRIENDLY_CAPTCHA_API_KEY') ?: ''),
+            'friendly_captcha_site_key' => $env['FRIENDLY_CAPTCHA_SITE_KEY'] ?? (getenv('FRIENDLY_CAPTCHA_SITE_KEY') ?: ''),
             'discord_webhook_url' => $env['DISCORD_WEBHOOK_URL'] ?? (getenv('DISCORD_WEBHOOK_URL') ?: ''),
             'slack_webhook_url' => $env['SLACK_WEBHOOK_URL'] ?? (getenv('SLACK_WEBHOOK_URL') ?: ''),
             'generic_webhook_url' => $env['GENERIC_WEBHOOK_URL'] ?? (getenv('GENERIC_WEBHOOK_URL') ?: ''),
@@ -822,6 +836,12 @@ final class AdminController
             'mail_from_name',
             'turnstile_secret',
             'turnstile_site_key',
+            'hcaptcha_secret',
+            'hcaptcha_site_key',
+            'recaptcha_secret',
+            'recaptcha_site_key',
+            'friendly_captcha_api_key',
+            'friendly_captcha_site_key',
             'discord_webhook_url',
             'slack_webhook_url',
             'generic_webhook_url',
@@ -916,6 +936,12 @@ final class AdminController
                 'MAIL_FROM_NAME' => trim((string) ($input['mail_from_name'] ?? '')),
                 'TURNSTILE_SECRET' => trim((string) ($input['turnstile_secret'] ?? '')),
                 'TURNSTILE_SITE_KEY' => trim((string) ($input['turnstile_site_key'] ?? '')),
+                'HCAPTCHA_SECRET' => trim((string) ($input['hcaptcha_secret'] ?? '')),
+                'HCAPTCHA_SITE_KEY' => trim((string) ($input['hcaptcha_site_key'] ?? '')),
+                'RECAPTCHA_SECRET' => trim((string) ($input['recaptcha_secret'] ?? '')),
+                'RECAPTCHA_SITE_KEY' => trim((string) ($input['recaptcha_site_key'] ?? '')),
+                'FRIENDLY_CAPTCHA_API_KEY' => trim((string) ($input['friendly_captcha_api_key'] ?? '')),
+                'FRIENDLY_CAPTCHA_SITE_KEY' => trim((string) ($input['friendly_captcha_site_key'] ?? '')),
                 'DISCORD_WEBHOOK_URL' => trim((string) ($input['discord_webhook_url'] ?? '')),
                 'SLACK_WEBHOOK_URL' => trim((string) ($input['slack_webhook_url'] ?? '')),
                 'GENERIC_WEBHOOK_URL' => trim((string) ($input['generic_webhook_url'] ?? '')),
@@ -1367,10 +1393,19 @@ final class AdminController
         $databaseDirectory = dirname(str_starts_with($databasePath, '/') ? $databasePath : dirname(__DIR__, 2) . '/' . $databasePath);
         $mailReady = (string) ($settings['mail_from'] ?? '') !== ''
             && ((string) ($settings['mailer_dsn'] ?? '') !== '' || (string) ($settings['smtp_host'] ?? '') !== '');
+        $captchaReady = (
+            (string) ($settings['turnstile_secret'] ?? '') !== '' && (string) ($settings['turnstile_site_key'] ?? '') !== ''
+        ) || (
+            (string) ($settings['hcaptcha_secret'] ?? '') !== '' && (string) ($settings['hcaptcha_site_key'] ?? '') !== ''
+        ) || (
+            (string) ($settings['recaptcha_secret'] ?? '') !== '' && (string) ($settings['recaptcha_site_key'] ?? '') !== ''
+        ) || (
+            (string) ($settings['friendly_captcha_api_key'] ?? '') !== '' && (string) ($settings['friendly_captcha_site_key'] ?? '') !== ''
+        );
 
         return [
             'mail' => $mailReady ? 'Configured' : 'Needs SMTP',
-            'turnstile' => (string) ($settings['turnstile_secret'] ?? '') !== '' ? 'Configured' : 'Optional',
+            'captcha' => $captchaReady ? 'Configured' : 'Optional',
             'storage' => is_dir($databaseDirectory) && is_writable($databaseDirectory) ? 'Writable' : 'Check storage',
             'forms' => (string) count($this->forms),
         ];
@@ -1441,12 +1476,22 @@ final class AdminController
         $rateLimitMax = max(1, (int) ($input['rate_limit_max'] ?? 5));
         $rateLimitWindow = max(1, (int) ($input['rate_limit_window'] ?? 10));
         $dailyLimit = max(1, (int) ($input['daily_limit'] ?? 200));
+        $captchaProvider = (string) ($input['captcha_provider'] ?? 'none');
+
+        if (!isset($input['captcha_provider']) && isset($input['turnstile'])) {
+            $captchaProvider = 'turnstile';
+        }
+
+        if (!in_array($captchaProvider, ['none', 'turnstile', 'hcaptcha', 'recaptcha', 'friendlycaptcha'], true)) {
+            throw new InvalidArgumentException('CAPTCHA provider must be a supported option.');
+        }
 
         $config = [
             'recipient' => $recipient,
             'allowed_origins' => $allowedOrigins,
             'subject' => $subject !== '' ? $subject : 'New form submission',
-            'turnstile' => isset($input['turnstile']),
+            'captcha_provider' => $captchaProvider,
+            'turnstile' => $captchaProvider === 'turnstile',
             'require_api_key' => isset($input['require_api_key']),
             'rate_limit_per_ip' => [
                 'max' => $rateLimitMax,
@@ -1487,6 +1532,12 @@ final class AdminController
             static fn (string $channel): bool => in_array($channel, $allowedChannels, true)
         )));
 
+        $notificationOverrides = $this->notificationOverridesFromPost($input);
+
+        if ($notificationOverrides !== []) {
+            $config['notification_overrides'] = $notificationOverrides;
+        }
+
         if ($blockedPatterns !== []) {
             $config['blocked_patterns'] = $blockedPatterns;
         }
@@ -1508,14 +1559,52 @@ final class AdminController
             'rate_limit_max' => (string) (int) (($config['rate_limit_per_ip']['max'] ?? 5)),
             'rate_limit_window' => (string) (int) (($config['rate_limit_per_ip']['window_minutes'] ?? 10)),
             'daily_limit' => (string) (int) ($config['daily_limit'] ?? 200),
+            'captcha_provider' => (string) ($config['captcha_provider'] ?? (!empty($config['turnstile']) ? 'turnstile' : 'none')),
             'turnstile' => !empty($config['turnstile']) ? '1' : '',
             'require_api_key' => !empty($config['require_api_key']) ? '1' : '',
             'blocked_patterns' => implode(PHP_EOL, $config['blocked_patterns'] ?? []),
             'upload_max_file_size_mb' => (string) (int) ($config['uploads']['max_file_size_mb'] ?? 10),
             'upload_max_files' => (string) (int) ($config['uploads']['max_files'] ?? 3),
             'upload_allowed_extensions' => implode(PHP_EOL, $config['uploads']['allowed_extensions'] ?? []),
-            'notification_channels' => $config['notification_channels'] ?? ['discord', 'slack', 'telegram', 'generic'],
+            'notification_channels' => is_array($config['notification_channels'] ?? null)
+                ? $config['notification_channels']
+                : [],
+            'discord_webhook_url' => (string) ($config['notification_overrides']['discord_webhook_url'] ?? ''),
+            'slack_webhook_url' => (string) ($config['notification_overrides']['slack_webhook_url'] ?? ''),
+            'generic_webhook_url' => (string) ($config['notification_overrides']['generic_webhook_url'] ?? ''),
+            'telegram_bot_token' => (string) ($config['notification_overrides']['telegram_bot_token'] ?? ''),
+            'telegram_chat_id' => (string) ($config['notification_overrides']['telegram_chat_id'] ?? ''),
         ];
+    }
+
+    /** @param array<string, mixed> $input @return array<string, string> */
+    private function notificationOverridesFromPost(array $input): array
+    {
+        $fields = [
+            'discord_webhook_url',
+            'slack_webhook_url',
+            'generic_webhook_url',
+            'telegram_bot_token',
+            'telegram_chat_id',
+        ];
+        $overrides = [];
+
+        foreach ($fields as $field) {
+            $value = trim((string) ($input[$field] ?? ''));
+            $this->assertSafeEnvValue($field, $value);
+
+            if ($value !== '') {
+                $overrides[$field] = $value;
+            }
+        }
+
+        foreach (['discord_webhook_url', 'slack_webhook_url', 'generic_webhook_url'] as $field) {
+            if (isset($overrides[$field]) && !$this->isHttpUrl($overrides[$field])) {
+                throw new InvalidArgumentException('Per-form webhook URLs must be valid http or https URLs.');
+            }
+        }
+
+        return $overrides;
     }
 
     /** @return list<string> */
@@ -1572,6 +1661,10 @@ final class AdminController
 
     private function clientIp(): ?string
     {
+        if ($this->clientIp !== null && $this->clientIp !== '') {
+            return $this->clientIp;
+        }
+
         $ip = $_SERVER['REMOTE_ADDR'] ?? null;
 
         return is_string($ip) && $ip !== '' ? $ip : null;

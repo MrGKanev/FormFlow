@@ -27,4 +27,22 @@ final class SqliteWebhookDeliveryRepositoryTest extends TestCase
         $this->assertSame('sent', $entries[1]['status']);
         $this->assertNotEmpty($entries[1]['sent_at']);
     }
+
+    public function testQueuesWebhookDeliveryForWorker(): void
+    {
+        $repository = new SqliteWebhookDeliveryRepository(':memory:');
+
+        $repository->enqueue('contact', 'generic', 'https://example.test/hook', [
+            'form_id' => 'contact',
+            'fields' => ['email' => 'ada@example.com'],
+        ]);
+
+        $due = $repository->due();
+
+        $this->assertCount(1, $due);
+        $this->assertSame('pending', $due[0]['status']);
+        $this->assertSame(0, $due[0]['attempts']);
+        $this->assertSame('https://example.test/hook', $due[0]['url']);
+        $this->assertJson((string) $due[0]['payload_json']);
+    }
 }

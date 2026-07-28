@@ -537,6 +537,7 @@ final class AdminControllerTest extends TestCase
             'upload_max_files' => '2',
             'upload_allowed_extensions' => "pdf\nJPG",
             'notification_channels' => ['slack', 'generic'],
+            'slack_webhook_url' => 'https://hooks.slack.com/services/form-specific',
             'csrf_token' => $token,
         ];
 
@@ -551,13 +552,72 @@ final class AdminControllerTest extends TestCase
         $this->assertArrayNotHasKey('allowed_fields', $forms['newsletter']);
         $this->assertArrayNotHasKey('required_fields', $forms['newsletter']);
         $this->assertSame(['max' => 3, 'window_minutes' => 15], $forms['newsletter']['rate_limit_per_ip']);
+        $this->assertSame('turnstile', $forms['newsletter']['captcha_provider']);
+        $this->assertTrue($forms['newsletter']['turnstile']);
         $this->assertSame([
             'max_file_size_mb' => 6,
             'max_files' => 2,
             'allowed_extensions' => ['pdf', 'jpg'],
         ], $forms['newsletter']['uploads']);
         $this->assertSame(['slack', 'generic'], $forms['newsletter']['notification_channels']);
+        $this->assertSame([
+            'slack_webhook_url' => 'https://hooks.slack.com/services/form-specific',
+        ], $forms['newsletter']['notification_overrides']);
         $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', (string) $apiKeys->get('newsletter'));
+    }
+
+    public function testNewFormPageDoesNotPreselectNotificationChannels(): void
+    {
+        $controller = $this->makeController();
+        $this->login($controller);
+
+        $page = $controller->handle('admin/forms/new');
+
+        $this->assertSame(200, $page['status']);
+        $this->assertStringNotContainsString('value="discord" checked', $page['body']);
+        $this->assertStringNotContainsString('value="slack" checked', $page['body']);
+        $this->assertStringNotContainsString('value="telegram" checked', $page['body']);
+        $this->assertStringNotContainsString('value="generic" checked', $page['body']);
+    }
+
+    public function testNewFormPageSelectsNoCaptchaByDefaultWithoutSettings(): void
+    {
+        $controller = $this->makeController();
+        $this->login($controller);
+
+        $page = $controller->handle('admin/forms/new');
+
+        $this->assertSame(200, $page['status']);
+        $this->assertStringContainsString('<option value="none" selected', $page['body']);
+    }
+
+    public function testFormsPageIncludesSelectedCaptchaSnippet(): void
+    {
+        $files = $this->settingsFiles();
+        file_put_contents($files['env'], "HCAPTCHA_SITE_KEY='hcaptcha-site-key'\n", FILE_APPEND);
+
+        try {
+            $controller = $this->makeController(
+                forms: [
+                    'newsletter' => [
+                        'recipient' => 'news@example.com',
+                        'captcha_provider' => 'hcaptcha',
+                    ],
+                ],
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+            $this->login($controller);
+
+            $page = $controller->handle('admin/forms');
+
+            $this->assertSame(200, $page['status']);
+            $this->assertStringContainsString('h-captcha', $page['body']);
+            $this->assertStringContainsString('https://js.hcaptcha.com/1/api.js', $page['body']);
+        } finally {
+            $this->removeSettingsFiles($files);
+        }
     }
 
     public function testNewFormPagePostRejectsDuplicateFormId(): void
@@ -705,6 +765,13 @@ final class AdminControllerTest extends TestCase
                 'mail_from' => 'new@example.com',
                 'mail_from_name' => 'New Formflow',
                 'turnstile_secret' => 'new-turnstile',
+                'turnstile_site_key' => 'turnstile-site',
+                'hcaptcha_secret' => 'hcaptcha-secret',
+                'hcaptcha_site_key' => 'hcaptcha-site',
+                'recaptcha_secret' => 'recaptcha-secret',
+                'recaptcha_site_key' => 'recaptcha-site',
+                'friendly_captcha_api_key' => 'friendly-api-key',
+                'friendly_captcha_site_key' => 'friendly-site',
                 'database_path' => 'storage/new.sqlite',
                 'ip_hash_secret' => 'abcdef1234567890',
                 'retention_days' => '90',
@@ -729,6 +796,9 @@ final class AdminControllerTest extends TestCase
             $this->assertStringContainsString("SMTP_ENCRYPTION='ssl'", (string) $env);
             $this->assertStringContainsString("SMTP_USERNAME='new-user'", (string) $env);
             $this->assertStringContainsString("SMTP_PASSWORD='new-pass'", (string) $env);
+            $this->assertStringContainsString("HCAPTCHA_SECRET='hcaptcha-secret'", (string) $env);
+            $this->assertStringContainsString("RECAPTCHA_SITE_KEY='recaptcha-site'", (string) $env);
+            $this->assertStringContainsString("FRIENDLY_CAPTCHA_API_KEY='friendly-api-key'", (string) $env);
             $this->assertStringContainsString("RETENTION_DAYS='90'", (string) $env);
             $this->assertStringContainsString("ADMIN_USERNAME='owner'", (string) $env);
             $this->assertMatchesRegularExpression("/ADMIN_PASSWORD_HASH='\\\$2y\\\$/", (string) $env);
@@ -960,7 +1030,11 @@ final class AdminControllerTest extends TestCase
         );
         $this->login($controller);
 
-        $controller->handle('admin/forms/newsletter/edit');
+        $editPage = $controller->handle('admin/forms/newsletter/edit');
+        $this->assertStringNotContainsString('value="discord" checked', $editPage['body']);
+        $this->assertStringNotContainsString('value="slack" checked', $editPage['body']);
+        $this->assertStringNotContainsString('value="telegram" checked', $editPage['body']);
+        $this->assertStringNotContainsString('value="generic" checked', $editPage['body']);
         $token = $this->csrfToken();
 
         $_SERVER['REQUEST_METHOD'] = 'POST';
