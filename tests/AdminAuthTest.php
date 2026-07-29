@@ -6,6 +6,9 @@ namespace formflow\Tests;
 
 use formflow\AdminAuth;
 use formflow\SqliteRateLimiter;
+use formflow\SqliteTotpReplayGuard;
+use formflow\Totp;
+use formflow\TotpReplayGuardInterface;
 use PHPUnit\Framework\TestCase;
 
 final class AdminAuthTest extends TestCase
@@ -15,7 +18,8 @@ final class AdminAuthTest extends TestCase
         int $maxAttempts = 5,
         int $windowMinutes = 15,
         ?SqliteRateLimiter $rateLimiter = null,
-        string $totpSecret = ''
+        string $totpSecret = '',
+        ?TotpReplayGuardInterface $totpReplayGuard = null
     ): AdminAuth {
         return new AdminAuth(
             'admin',
@@ -24,7 +28,8 @@ final class AdminAuthTest extends TestCase
             $maxAttempts,
             $windowMinutes,
             null,
-            $totpSecret
+            $totpSecret,
+            $totpReplayGuard
         );
     }
 
@@ -65,6 +70,24 @@ final class AdminAuthTest extends TestCase
 
         $this->assertSame('invalid', $auth->attemptLogin('admin', 'correct-password', 'ip-hash-1'));
         $this->assertSame('invalid', $auth->attemptLogin('admin', 'correct-password', 'ip-hash-1', '000000'));
+    }
+
+    public function testReplayedTotpCodeIsRejected(): void
+    {
+        $hash = password_hash('correct-password', PASSWORD_DEFAULT);
+        $secret = 'JBSWY3DPEHPK3PXP';
+        $code = $this->currentTotpCode($secret);
+        $auth = $this->makeAuth($hash, totpSecret: $secret, totpReplayGuard: new SqliteTotpReplayGuard(':memory:'));
+
+        $this->assertSame('ok', $auth->attemptLogin('admin', 'correct-password', 'ip-hash-1', $code));
+        $this->assertSame('invalid', $auth->attemptLogin('admin', 'correct-password', 'ip-hash-1', $code));
+    }
+
+    private function currentTotpCode(string $secret): string
+    {
+        $reflection = new \ReflectionMethod(Totp::class, 'code');
+
+        return $reflection->invoke(null, $secret, time());
     }
 
     public function testLockoutAfterMaxAttempts(): void

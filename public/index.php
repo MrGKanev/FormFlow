@@ -21,6 +21,7 @@ use formflow\SqliteFormApiKeyRepository;
 use formflow\SqliteFormRepository;
 use formflow\SqliteRateLimiter;
 use formflow\SqliteSubmissionRepository;
+use formflow\SqliteTotpReplayGuard;
 use formflow\Turnstile;
 use Symfony\Component\Dotenv\Dotenv;
 
@@ -272,7 +273,9 @@ if ($formId === 'health') {
 
 $databasePath = databasePath($root);
 
-$ipHashSecret = getenv('IP_HASH_SECRET') ?: 'change-me';
+// Never fall back to a hardcoded/guessable secret: derive one from the per-install admin
+// password hash so IP hashes stay unguessable even if IP_HASH_SECRET wasn't set in .env.
+$ipHashSecret = getenv('IP_HASH_SECRET') ?: hash('sha256', getenv('ADMIN_PASSWORD_HASH') ?: bin2hex(random_bytes(32)));
 $configuredForms = require $root . '/config/forms.php';
 $formRepository = new SqliteFormRepository($databasePath);
 $forms = array_merge($configuredForms, $formRepository->all());
@@ -300,7 +303,8 @@ if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
             (int) ($adminConfig['login_rate_limit']['max'] ?? 5),
             (int) ($adminConfig['login_rate_limit']['window_minutes'] ?? 15),
             $adminUsers,
-            getenv('ADMIN_TOTP_SECRET') ?: ''
+            getenv('ADMIN_TOTP_SECRET') ?: '',
+            new SqliteTotpReplayGuard($databasePath)
         ),
         new AdminIpWhitelist($allowedIps, $whitelistRepository),
         new SqliteSubmissionRepository($databasePath),

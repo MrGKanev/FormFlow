@@ -5,7 +5,6 @@ declare(strict_types=1);
 
 use formflow\CurlWebhookTransport;
 use formflow\MailDeliveryWorker;
-use formflow\MailFailureRetrier;
 use formflow\MailService;
 use formflow\SqliteFormRepository;
 use formflow\SqliteSubmissionRepository;
@@ -95,26 +94,17 @@ if ($command === 'retention:prune') {
 if ($command === 'mail:work' || $command === 'mail:retry-failed') {
     $configuredForms = require $root . '/config/forms.php';
     $forms = array_merge($configuredForms, (new SqliteFormRepository($databasePath))->all());
-    $worker = $command === 'mail:work'
-        ? new MailDeliveryWorker(
-            $forms,
-            new MailService(
-                cliMailerDsnFromEnv(),
-                getenv('MAIL_FROM') ?: '',
-                getenv('MAIL_FROM_NAME') ?: 'formflow'
-            ),
-            new SqliteSubmissionRepository($databasePath)
-        )
-        : new MailFailureRetrier(
-            $forms,
-            new MailService(
-                cliMailerDsnFromEnv(),
-                getenv('MAIL_FROM') ?: '',
-                getenv('MAIL_FROM_NAME') ?: 'formflow'
-            ),
-            new SqliteSubmissionRepository($databasePath)
-        );
-    $summary = $worker->process((int) cliOption($argv, 'limit', '100'));
+    $worker = new MailDeliveryWorker(
+        $forms,
+        new MailService(
+            cliMailerDsnFromEnv(),
+            getenv('MAIL_FROM') ?: '',
+            getenv('MAIL_FROM_NAME') ?: 'formflow'
+        ),
+        new SqliteSubmissionRepository($databasePath)
+    );
+    $limit = (int) cliOption($argv, 'limit', '100');
+    $summary = $command === 'mail:work' ? $worker->process($limit) : $worker->retryFailed($limit);
 
     echo sprintf(
         "%s attempted=%d sent=%d failed=%d skipped=%d\n",

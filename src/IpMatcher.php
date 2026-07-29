@@ -26,24 +26,26 @@ final class IpMatcher
         return false;
     }
 
+    /** Supports both IPv4 and IPv6 CIDR ranges by comparing the inet_pton() binary form. */
     private function ipInCidr(string $ip, string $cidr): bool
     {
         [$subnet, $prefixLength] = explode('/', $cidr, 2);
-
-        $ipLong = ip2long($ip);
-        $subnetLong = ip2long($subnet);
-
-        if ($ipLong === false || $subnetLong === false) {
-            return false;
-        }
 
         if (!ctype_digit($prefixLength)) {
             return false;
         }
 
-        $prefixLength = (int) $prefixLength;
+        $ipBinary = inet_pton($ip);
+        $subnetBinary = inet_pton($subnet);
 
-        if ($prefixLength > 32) {
+        if ($ipBinary === false || $subnetBinary === false || strlen($ipBinary) !== strlen($subnetBinary)) {
+            return false;
+        }
+
+        $prefixLength = (int) $prefixLength;
+        $addressBits = strlen($ipBinary) * 8;
+
+        if ($prefixLength > $addressBits) {
             return false;
         }
 
@@ -51,8 +53,20 @@ final class IpMatcher
             return true;
         }
 
-        $mask = -1 << (32 - $prefixLength);
+        $fullBytes = intdiv($prefixLength, 8);
 
-        return ($ipLong & $mask) === ($subnetLong & $mask);
+        if (strncmp($ipBinary, $subnetBinary, $fullBytes) !== 0) {
+            return false;
+        }
+
+        $remainderBits = $prefixLength % 8;
+
+        if ($remainderBits === 0) {
+            return true;
+        }
+
+        $mask = (0xFF << (8 - $remainderBits)) & 0xFF;
+
+        return (ord($ipBinary[$fullBytes]) & $mask) === (ord($subnetBinary[$fullBytes]) & $mask);
     }
 }

@@ -6,7 +6,7 @@ namespace formflow;
 
 final class CurlWebhookNotifier implements WebhookNotifierInterface
 {
-    private const MAX_ATTEMPTS = 3;
+    private const MAX_ATTEMPTS = 2;
 
     private readonly WebhookTransportInterface $transport;
 

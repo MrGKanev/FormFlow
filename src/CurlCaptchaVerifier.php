@@ -97,38 +97,17 @@ final class CurlCaptchaVerifier implements CaptchaVerifierInterface
     /** @param list<string> $headers */
     private function post(string $url, string $body, array $headers): bool
     {
-        $handle = curl_init($url);
+        $result = CurlHttpClient::post($url, $body, $headers, 10, 5);
 
-        if ($handle === false) {
-            throw new RuntimeException('Unable to initialize cURL.');
+        if ($result['body'] === false) {
+            throw new RuntimeException('CAPTCHA verification request failed: ' . $result['error']);
         }
 
-        curl_setopt_array($handle, [
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $body,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 10,
-            CURLOPT_CONNECTTIMEOUT => 5,
-            CURLOPT_HTTPHEADER => $headers,
-        ]);
-
-        $response = curl_exec($handle);
-
-        if ($response === false) {
-            $error = curl_error($handle);
-            curl_close($handle);
-
-            throw new RuntimeException('CAPTCHA verification request failed: ' . $error);
-        }
-
-        $statusCode = curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
-        curl_close($handle);
-
-        if ($statusCode < 200 || $statusCode >= 300) {
+        if ($result['statusCode'] < 200 || $result['statusCode'] >= 300) {
             return false;
         }
 
-        $data = json_decode((string) $response, true, 512, JSON_THROW_ON_ERROR);
+        $data = json_decode($result['body'], true, 512, JSON_THROW_ON_ERROR);
 
         return ($data['success'] ?? false) === true;
     }

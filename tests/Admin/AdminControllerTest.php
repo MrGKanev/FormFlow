@@ -963,7 +963,7 @@ final class AdminControllerTest extends TestCase
             $result = $controller->handle('admin/settings');
 
             $this->assertSame(200, $result['status']);
-            $this->assertStringContainsString('<svg class="totp-qr"', $result['body']);
+            $this->assertStringContainsString('class="qr-svg totp-qr"', $result['body']);
             $this->assertStringContainsString('otpauth://totp/FormFlow%3Aadmin', $result['body']);
 
             $env = file_get_contents($files['env']);
@@ -1100,6 +1100,19 @@ final class AdminControllerTest extends TestCase
         $this->assertNotSame([], $audit->list());
     }
 
+    public function testCsvSafeCellNeutralizesFormulaInjection(): void
+    {
+        $controller = $this->makeController(['203.0.113.10'], new SqliteSubmissionRepository(':memory:'));
+        $method = new \ReflectionMethod($controller, 'csvSafeCell');
+
+        $this->assertSame("'=HYPERLINK(\"http://evil/\",\"x\")", $method->invoke($controller, '=HYPERLINK("http://evil/","x")'));
+        $this->assertSame("'+1", $method->invoke($controller, '+1'));
+        $this->assertSame("'-1", $method->invoke($controller, '-1'));
+        $this->assertSame("'@SUM(1)", $method->invoke($controller, '@SUM(1)'));
+        $this->assertSame('Ada', $method->invoke($controller, 'Ada'));
+        $this->assertSame('', $method->invoke($controller, ''));
+    }
+
     public function testSubmissionResendUsesMailSender(): void
     {
         $submissions = new SqliteSubmissionRepository(':memory:');
@@ -1190,6 +1203,11 @@ final class AdminControllerTest extends TestCase
             );
 
             $_GET = ['token' => $token];
+            $redirect = $controller->handle('admin/recovery');
+            $this->assertSame(302, $redirect['status']);
+            $this->assertSame('/admin/recovery', $redirect['redirect']);
+
+            $_GET = [];
             $get = $controller->handle('admin/recovery');
             $this->assertSame(200, $get['status']);
             $tokenCsrf = $this->csrfToken();
@@ -1214,6 +1232,56 @@ final class AdminControllerTest extends TestCase
         }
     }
 
+    public function testRecoveryRejectsInvalidTokenAfterRedirectHop(): void
+    {
+        $files = $this->settingsFiles();
+        file_put_contents($files['env'], "RECOVERY_TOKEN_HASH='" . password_hash('real-token', PASSWORD_DEFAULT) . "'" . PHP_EOL, FILE_APPEND);
+
+        try {
+            $controller = $this->makeController(
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+
+            $_GET = ['token' => 'wrong-token'];
+            $redirect = $controller->handle('admin/recovery');
+            $this->assertSame(302, $redirect['status']);
+
+            $_GET = [];
+            $result = $controller->handle('admin/recovery');
+            $this->assertSame(403, $result['status']);
+        } finally {
+            $_GET = [];
+            $this->removeSettingsFiles($files);
+        }
+    }
+
+    public function testConfigExportAndBackupRejectMissingCsrfToken(): void
+    {
+        $files = $this->settingsFiles();
+
+        try {
+            $controller = $this->makeController(
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+            $this->login($controller);
+
+            $_SERVER['REQUEST_METHOD'] = 'POST';
+            $_POST = [];
+            $this->assertSame(403, $controller->handle('admin/config/export')['status']);
+            $this->assertSame(403, $controller->handle('admin/backup')['status']);
+
+            $_POST = ['csrf_token' => 'wrong-token'];
+            $this->assertSame(403, $controller->handle('admin/config/export')['status']);
+        } finally {
+            $_POST = [];
+            $this->removeSettingsFiles($files);
+        }
+    }
+
     public function testConfigExportReturnsJson(): void
     {
         $files = $this->settingsFiles();
@@ -1226,12 +1294,15 @@ final class AdminControllerTest extends TestCase
             );
             $this->login($controller);
 
+            $_SERVER['REQUEST_METHOD'] = 'POST';
+            $_POST = ['csrf_token' => $this->csrfToken()];
             $result = $controller->handle('admin/config/export');
 
             $this->assertSame(200, $result['status']);
             $this->assertSame('application/json; charset=utf-8', $result['headers']['Content-Type']);
             $this->assertIsArray(json_decode($result['body'], true));
         } finally {
+            $_POST = [];
             $this->removeSettingsFiles($files);
         }
     }

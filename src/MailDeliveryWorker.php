@@ -21,9 +21,24 @@ final class MailDeliveryWorker
     /** @return array{attempted: int, sent: int, failed: int, skipped: int} */
     public function process(int $limit = 100, bool $includeFailed = true): array
     {
+        return $this->deliver($this->submissions->findPendingMail($limit, $includeFailed));
+    }
+
+    /** Retries only submissions already marked 'failed', without picking up fresh pending mail. */
+    public function retryFailed(int $limit = 100): array
+    {
+        return $this->deliver($this->submissions->findFailed($limit));
+    }
+
+    /**
+     * @param list<array<string, mixed>> $submissions
+     * @return array{attempted: int, sent: int, failed: int, skipped: int}
+     */
+    private function deliver(array $submissions): array
+    {
         $summary = ['attempted' => 0, 'sent' => 0, 'failed' => 0, 'skipped' => 0];
 
-        foreach ($this->submissions->findPendingMail($limit, $includeFailed) as $submission) {
+        foreach ($submissions as $submission) {
             $formId = (string) $submission['form_id'];
             $config = $this->forms[$formId] ?? null;
             $payload = json_decode((string) $submission['payload'], true);

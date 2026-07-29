@@ -311,7 +311,7 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         }
 
         if ($search !== null && trim($search) !== '') {
-            $conditions[] = '(payload LIKE :search OR form_id LIKE :search OR status LIKE :search OR error_message LIKE :search)';
+            $conditions[] = 'id IN (SELECT rowid FROM submissions_search WHERE x LIKE :search)';
             $params['search'] = '%' . trim($search) . '%';
         }
 
@@ -356,5 +356,56 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_submissions_form_id ON submissions(form_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_submissions_created_at ON submissions(created_at)');
+
+        $this->createSearchIndex();
+    }
+
+    /**
+     * A trigram-tokenized FTS5 table so free-text search can use an index instead of scanning
+     * every row with LIKE '%term%'. Kept in sync via triggers so no repository method needs to
+     * know about it; `x` holds the concatenated searchable columns for one submission.
+     */
+    private function createSearchIndex(): void
+    {
+        $searchIndexExists = (bool) $this->pdo
+            ->query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'submissions_search'")
+            ->fetchColumn();
+
+        $this->pdo->exec("CREATE VIRTUAL TABLE IF NOT EXISTS submissions_search USING fts5(x, tokenize = 'trigram')");
+
+        if (!$searchIndexExists) {
+            $this->pdo->exec(
+                "INSERT INTO submissions_search (rowid, x)
+                 SELECT id, form_id || ' ' || status || ' ' || COALESCE(error_message, '') || ' ' || payload
+                 FROM submissions"
+            );
+        }
+
+        $this->pdo->exec(
+            "CREATE TRIGGER IF NOT EXISTS submissions_search_ai AFTER INSERT ON submissions BEGIN
+                INSERT INTO submissions_search (rowid, x)
+                VALUES (
+                    new.id,
+                    new.form_id || ' ' || new.status || ' ' || COALESCE(new.error_message, '') || ' ' || new.payload
+                );
+            END"
+        );
+
+        $this->pdo->exec(
+            "CREATE TRIGGER IF NOT EXISTS submissions_search_au AFTER UPDATE ON submissions BEGIN
+                DELETE FROM submissions_search WHERE rowid = old.id;
+                INSERT INTO submissions_search (rowid, x)
+                VALUES (
+                    new.id,
+                    new.form_id || ' ' || new.status || ' ' || COALESCE(new.error_message, '') || ' ' || new.payload
+                );
+            END"
+        );
+
+        $this->pdo->exec(
+            'CREATE TRIGGER IF NOT EXISTS submissions_search_ad AFTER DELETE ON submissions BEGIN
+                DELETE FROM submissions_search WHERE rowid = old.id;
+            END'
+        );
     }
 }

@@ -82,9 +82,9 @@ final class CurlWebhookNotifierTest extends TestCase
         $this->assertNull($entry['error_message']);
     }
 
-    public function testRecordsFailedDeliveryAfterThreeAttempts(): void
+    public function testRecordsFailedDeliveryAfterMaxAttempts(): void
     {
-        $transport = new FakeWebhookTransport(['HTTP 500.', 'HTTP 500.', 'HTTP 500.']);
+        $transport = new FakeWebhookTransport(['HTTP 500.', 'HTTP 500.']);
         $deliveries = new SqliteWebhookDeliveryRepository(':memory:');
         $notifier = new CurlWebhookNotifier(
             'https://discord.test/webhook',
@@ -98,10 +98,10 @@ final class CurlWebhookNotifierTest extends TestCase
 
         $notifier->notify('contact', ['name' => 'Ada'], ['discord']);
 
-        $this->assertCount(3, $transport->requests);
+        $this->assertCount(2, $transport->requests);
         $entry = $deliveries->deliveryLog()[0];
         $this->assertSame('failed', $entry['status']);
-        $this->assertSame(3, $entry['attempts']);
+        $this->assertSame(2, $entry['attempts']);
         $this->assertSame('HTTP 500.', $entry['error_message']);
     }
 

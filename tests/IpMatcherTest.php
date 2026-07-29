@@ -58,4 +58,36 @@ final class IpMatcherTest extends TestCase
         $this->assertTrue($matcher->matches('198.51.100.5', ['198.51.100.0/28']));
         $this->assertFalse($matcher->matches('198.51.100.20', ['198.51.100.0/28']));
     }
+
+    public function testIpv6ExactMatch(): void
+    {
+        $matcher = new IpMatcher();
+
+        $this->assertTrue($matcher->matches('2001:db8::1', ['2001:db8::1']));
+        $this->assertFalse($matcher->matches('2001:db8::2', ['2001:db8::1']));
+    }
+
+    public function testIpv6CidrRangeMatchesIpInside(): void
+    {
+        $matcher = new IpMatcher();
+
+        $this->assertTrue($matcher->matches('2001:db8::42', ['2001:db8::/32']));
+        $this->assertFalse($matcher->matches('2001:db9::42', ['2001:db8::/32']));
+    }
+
+    public function testIpv6NonOctetAlignedCidrPrefixMatchesCorrectly(): void
+    {
+        $matcher = new IpMatcher();
+
+        $this->assertTrue($matcher->matches('2001:db8::5', ['2001:db8::/125']));
+        $this->assertFalse($matcher->matches('2001:db8::9', ['2001:db8::/125']));
+    }
+
+    public function testMixedAddressFamilyCidrNeverMatches(): void
+    {
+        $matcher = new IpMatcher();
+
+        $this->assertFalse($matcher->matches('2001:db8::1', ['198.51.100.0/24']));
+        $this->assertFalse($matcher->matches('198.51.100.1', ['2001:db8::/32']));
+    }
 }

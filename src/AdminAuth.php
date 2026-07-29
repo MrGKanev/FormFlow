@@ -15,7 +15,8 @@ final class AdminAuth
         private readonly int $maxAttempts,
         private readonly int $windowMinutes,
         private readonly ?AdminUserRepositoryInterface $users = null,
-        private readonly string $bootstrapTotpSecret = ''
+        private readonly string $bootstrapTotpSecret = '',
+        private readonly ?TotpReplayGuardInterface $totpReplayGuard = null
     ) {
     }
 
@@ -43,7 +44,7 @@ final class AdminAuth
 
             $secret = (string) ($storedUser['totp_secret'] ?? '');
 
-            if ($secret !== '' && !Totp::verify($secret, (string) $totpCode)) {
+            if ($secret !== '' && !$this->verifyTotpOnce($secret, (string) $totpCode, 'user:' . $storedUser['id'])) {
                 return 'invalid';
             }
 
@@ -58,11 +59,26 @@ final class AdminAuth
             return 'invalid';
         }
 
-        if ($this->bootstrapTotpSecret !== '' && !Totp::verify($this->bootstrapTotpSecret, (string) $totpCode)) {
+        if (
+            $this->bootstrapTotpSecret !== ''
+            && !$this->verifyTotpOnce($this->bootstrapTotpSecret, (string) $totpCode, 'bootstrap:' . $this->adminUsername)
+        ) {
             return 'invalid';
         }
 
         return 'ok';
+    }
+
+    /** Verifies the TOTP code and, if a replay guard is configured, rejects a code already used for this identity. */
+    private function verifyTotpOnce(string $secret, string $code, string $identity): bool
+    {
+        $step = Totp::matchedStep($secret, $code);
+
+        if ($step === null) {
+            return false;
+        }
+
+        return $this->totpReplayGuard?->consume($identity, $step) ?? true;
     }
 
     public function login(?string $username = null): void

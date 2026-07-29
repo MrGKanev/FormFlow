@@ -6,12 +6,14 @@
   "require": {
     "php": "^8.2",
     "ext-curl": "*",
+    "ext-fileinfo": "*",
     "ext-json": "*",
     "ext-mbstring": "*",
     "ext-pdo": "*",
     "ext-pdo_sqlite": "*",
     "symfony/dotenv": "^7.0",
-    "symfony/mailer": "^7.0"
+    "symfony/mailer": "^7.0",
+    "chillerlan/php-qrcode": "^6.0"
   },
   "require-dev": {
     "phpunit/phpunit": "^11.0"

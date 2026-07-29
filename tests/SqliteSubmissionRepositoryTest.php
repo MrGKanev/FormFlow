@@ -134,4 +134,48 @@ final class SqliteSubmissionRepositoryTest extends TestCase
         $this->assertSame(2, $repository->count('contact', null));
         $this->assertSame(1, $repository->count(null, 'blocked_spam'));
     }
+
+    public function testSearchMatchesSubstringInsidePayloadWord(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $repository->create('contact', ['email' => 'ada@example.com'], null);
+        $repository->create('contact', ['email' => 'bob@other.test'], null);
+
+        $rows = $repository->findPaginated(null, null, 1, 10, search: 'xamp');
+
+        $this->assertCount(1, $rows);
+        $this->assertStringContainsString('ada@example.com', $rows[0]['payload']);
+    }
+
+    public function testSearchMatchesFormIdAndStatus(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $repository->create('newsletter', [], null, 'received');
+        $repository->create('contact', [], null, 'blocked_spam');
+
+        $this->assertCount(1, $repository->findPaginated(null, null, 1, 10, search: 'newsletter'));
+        $this->assertCount(1, $repository->findPaginated(null, null, 1, 10, search: 'blocked_spam'));
+    }
+
+    public function testSearchReflectsErrorMessageAfterMarkFailed(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $id = $repository->create('contact', [], null);
+
+        $this->assertCount(0, $repository->findPaginated(null, null, 1, 10, search: 'SMTP down'));
+
+        $repository->markFailed($id, 'SMTP down');
+
+        $this->assertCount(1, $repository->findPaginated(null, null, 1, 10, search: 'SMTP down'));
+    }
+
+    public function testSearchExcludesDeletedSubmissions(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $id = $repository->create('contact', ['name' => 'Ada Lovelace'], null);
+
+        $repository->delete($id);
+
+        $this->assertCount(0, $repository->findPaginated(null, null, 1, 10, search: 'Lovelace'));
+    }
 }

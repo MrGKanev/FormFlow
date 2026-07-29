@@ -383,6 +383,16 @@ final class AdminController
         return ['status' => 302, 'body' => '', 'redirect' => '/admin'];
     }
 
+    /** Neutralizes CSV formula injection (CWE-1236) by prefixing cells that spreadsheet apps treat as formulas. */
+    private function csvSafeCell(mixed $value): mixed
+    {
+        if (!is_string($value) || $value === '') {
+            return $value;
+        }
+
+        return str_contains("=+-@\t\r", $value[0]) ? "'" . $value : $value;
+    }
+
     /** @param list<array<string, mixed>> $rows */
     private function csvResponse(array $rows, string $filename = 'formflow-submissions.csv'): array
     {
@@ -395,7 +405,7 @@ final class AdminController
         fputcsv($csv, ['id', 'form_id', 'status', 'created_at', 'sent_at', 'reviewed_at', 'error_message', 'payload_json'], ',', '"', '');
 
         foreach ($rows as $row) {
-            fputcsv($csv, [
+            fputcsv($csv, array_map($this->csvSafeCell(...), [
                 $row['id'] ?? '',
                 $row['form_id'] ?? '',
                 $row['status'] ?? '',
@@ -404,7 +414,7 @@ final class AdminController
                 $row['reviewed_at'] ?? '',
                 $row['error_message'] ?? '',
                 $row['payload'] ?? '',
-            ], ',', '"', '');
+            ]), ',', '"', '');
         }
 
         rewind($csv);
@@ -1048,20 +1058,21 @@ final class AdminController
         foreach ($entries as $entry) {
             if (str_contains($entry, '/')) {
                 [$subnet, $prefix] = explode('/', $entry, 2);
+                $maxPrefix = match (true) {
+                    filter_var($subnet, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false => 32,
+                    filter_var($subnet, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false => 128,
+                    default => null,
+                };
 
-                if (
-                    filter_var($subnet, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false
-                    || !ctype_digit($prefix)
-                    || (int) $prefix > 32
-                ) {
-                    throw new InvalidArgumentException('Blocked IP entries must be exact IPs or IPv4 CIDR ranges.');
+                if ($maxPrefix === null || !ctype_digit($prefix) || (int) $prefix > $maxPrefix) {
+                    throw new InvalidArgumentException('Blocked IP entries must be exact IPs or CIDR ranges.');
                 }
 
                 continue;
             }
 
             if (filter_var($entry, FILTER_VALIDATE_IP) === false) {
-                throw new InvalidArgumentException('Blocked IP entries must be exact IPs or IPv4 CIDR ranges.');
+                throw new InvalidArgumentException('Blocked IP entries must be exact IPs or CIDR ranges.');
             }
         }
 
@@ -1350,11 +1361,22 @@ final class AdminController
 
     private function handleRecovery(): array
     {
-        $token = (string) ($_GET['token'] ?? $_POST['token'] ?? '');
+        // A GET with ?token= only ever happens once (the emailed/CLI link). Move it into the
+        // session and redirect to a clean URL so it doesn't linger in browser history, access
+        // logs of later requests on this page, or a Referer header.
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST' && isset($_GET['token'])) {
+            $_SESSION['recovery_token'] = (string) $_GET['token'];
+
+            return ['status' => 302, 'body' => '', 'redirect' => '/admin/recovery'];
+        }
+
+        $token = (string) ($_POST['token'] ?? $_SESSION['recovery_token'] ?? '');
         $settings = $this->currentSettings();
         $hash = (string) ($settings['recovery_token_hash'] ?? '');
 
         if ($token === '' || $hash === '' || !password_verify($token, $hash)) {
+            unset($_SESSION['recovery_token']);
+
             return $this->htmlResponse(403, '<h1>Invalid recovery token.</h1>');
         }
 
@@ -1378,6 +1400,7 @@ final class AdminController
                 'RECOVERY_TOKEN_HASH' => '',
             ]);
             $this->recordAudit('recovery.password_reset', 'Bootstrap password reset with recovery token.');
+            unset($_SESSION['recovery_token']);
 
             return ['status' => 302, 'body' => '', 'redirect' => '/admin/login'];
         }
@@ -1391,6 +1414,10 @@ final class AdminController
 
     private function handleBackup(): array
     {
+        if (!$this->verifyCsrfToken()) {
+            return $this->htmlResponse(403, '<h1>Forbidden</h1>');
+        }
+
         $settings = $this->currentSettings();
         $path = (string) ($settings['database_path'] ?? 'storage/submissions.sqlite');
         $path = str_starts_with($path, '/') ? $path : dirname(__DIR__, 2) . '/' . ltrim($path, '/');
@@ -1414,6 +1441,10 @@ final class AdminController
 
     private function handleConfigExport(): array
     {
+        if (!$this->verifyCsrfToken()) {
+            return $this->htmlResponse(403, '<h1>Forbidden</h1>');
+        }
+
         $data = [
             'settings' => $this->currentSettings(),
             'forms' => $this->forms,
