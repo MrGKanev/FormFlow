@@ -31,6 +31,22 @@ function cliDatabasePath(string $root): string
     return $databasePath;
 }
 
+function cliUploadDirectory(string $root): string
+{
+    return $root . '/storage/uploads';
+}
+
+function cliRecordWorkerRun(string $root, string $worker): void
+{
+    $directory = $root . '/storage/runtime';
+
+    if (!is_dir($directory) && !mkdir($directory, 0775, true) && !is_dir($directory)) {
+        return;
+    }
+
+    file_put_contents($directory . '/' . $worker . '-last-run.txt', gmdate('c') . PHP_EOL);
+}
+
 function cliMailerDsnFromEnv(): string
 {
     $advancedDsn = trim((string) (getenv('MAILER_DSN') ?: ''));
@@ -86,7 +102,7 @@ $databasePath = cliDatabasePath($root);
 
 if ($command === 'retention:prune') {
     $days = max(1, (int) cliOption($argv, 'days', (string) (getenv('RETENTION_DAYS') ?: '180')));
-    $deleted = (new SqliteSubmissionRepository($databasePath))->deleteOlderThan($days);
+    $deleted = (new SqliteSubmissionRepository($databasePath, cliUploadDirectory($root)))->deleteOlderThan($days);
     echo 'Deleted ' . $deleted . ' submissions older than ' . $days . ' days.' . PHP_EOL;
     exit(0);
 }
@@ -101,7 +117,7 @@ if ($command === 'mail:work' || $command === 'mail:retry-failed') {
             getenv('MAIL_FROM') ?: '',
             getenv('MAIL_FROM_NAME') ?: 'formflow'
         ),
-        new SqliteSubmissionRepository($databasePath)
+        new SqliteSubmissionRepository($databasePath, cliUploadDirectory($root))
     );
     $limit = (int) cliOption($argv, 'limit', '100');
     $summary = $command === 'mail:work' ? $worker->process($limit) : $worker->retryFailed($limit);
@@ -114,6 +130,7 @@ if ($command === 'mail:work' || $command === 'mail:retry-failed') {
         $summary['failed'],
         $summary['skipped']
     );
+    cliRecordWorkerRun($root, 'mail');
     exit($summary['failed'] > 0 ? 1 : 0);
 }
 
@@ -130,6 +147,7 @@ if ($command === 'webhooks:retry') {
         $summary['failed'],
         $summary['pending']
     );
+    cliRecordWorkerRun($root, 'webhooks');
     exit($summary['failed'] > 0 ? 1 : 0);
 }
 

@@ -6,7 +6,7 @@ namespace formflow;
 
 interface SubmissionRepositoryInterface
 {
-    /** @param array<string, string> $payload */
+    /** @param array<string, mixed> $payload */
     public function create(
         string $formId,
         array $payload,
@@ -69,4 +69,6 @@ interface SubmissionRepositoryInterface
         ?string $dateFrom = null,
         ?string $dateTo = null
     ): int;
+
+    public function oldestCreatedAtByStatus(string $status): ?string;
 }

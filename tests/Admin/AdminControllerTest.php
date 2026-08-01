@@ -63,7 +63,8 @@ final class AdminControllerTest extends TestCase
         ?AdminUserRepositoryInterface $adminUsers = null,
         ?AuditLogRepositoryInterface $auditLog = null,
         ?MailSenderInterface $mailSender = null,
-        ?SqliteWebhookDeliveryRepository $webhookDeliveries = null
+        ?SqliteWebhookDeliveryRepository $webhookDeliveries = null,
+        string $uploadDirectory = ''
     ): AdminController {
         $whitelistRepository ??= new SqliteAdminWhitelistRepository(':memory:');
         $forms ??= [
@@ -95,7 +96,9 @@ final class AdminControllerTest extends TestCase
             $adminUsers,
             $auditLog,
             $mailSender,
-            $webhookDeliveries
+            $webhookDeliveries,
+            null,
+            $uploadDirectory
         );
     }
 
@@ -360,11 +363,26 @@ final class AdminControllerTest extends TestCase
         $controller = $this->makeController();
         $this->login($controller);
 
+        $_SERVER['REQUEST_METHOD'] = 'GET';
+        $result = $controller->handle('admin/logout');
+
+        $this->assertSame(302, $result['status']);
+        $this->assertSame('/admin/login', $result['redirect']);
+        $this->assertSame(200, $controller->handle('admin')['status']);
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = ['csrf_token' => 'wrong-token'];
+        $this->assertSame(419, $controller->handle('admin/logout')['status']);
+        $this->assertSame(200, $controller->handle('admin')['status']);
+
+        $_POST = ['csrf_token' => $this->csrfToken()];
         $result = $controller->handle('admin/logout');
 
         $this->assertSame(302, $result['status']);
         $this->assertSame('/admin/login', $result['redirect']);
 
+        $_SERVER['REQUEST_METHOD'] = 'GET';
+        $_POST = [];
         $dashboard = $controller->handle('admin');
         $this->assertSame(302, $dashboard['status']);
         $this->assertSame('/admin/login', $dashboard['redirect']);
@@ -408,6 +426,45 @@ final class AdminControllerTest extends TestCase
 
         $this->assertSame(200, $result['status']);
         $this->assertStringContainsString('Ada', $result['body']);
+    }
+
+    public function testSubmissionUploadDownloadReturnsStoredFile(): void
+    {
+        $directory = sys_get_temp_dir() . '/formflow-admin-upload-' . bin2hex(random_bytes(6));
+        mkdir($directory);
+        $path = $directory . '/stored-file.txt';
+        file_put_contents($path, 'upload-content');
+        $submissions = new SqliteSubmissionRepository(':memory:');
+        $id = $submissions->create('contact', [
+            'attachment' => [
+                'type' => 'upload',
+                'original_name' => 'notes.txt',
+                'stored_name' => 'stored-file.txt',
+                'size_bytes' => 14,
+                'mime_type' => 'text/plain',
+            ],
+        ], null);
+        $controller = $this->makeController(['203.0.113.10'], $submissions, uploadDirectory: $directory);
+        $this->login($controller);
+
+        try {
+            $detail = $controller->handle('admin/submissions/' . $id);
+            $download = $controller->handle('admin/submissions/' . $id . '/uploads/attachment');
+
+            $this->assertStringContainsString('/admin/submissions/' . $id . '/uploads/attachment', $detail['body']);
+            $this->assertSame(200, $download['status']);
+            $this->assertSame('upload-content', $download['body']);
+            $this->assertSame('text/plain', $download['headers']['Content-Type']);
+            $this->assertStringContainsString('notes.txt', $download['headers']['Content-Disposition']);
+        } finally {
+            if (is_file($path)) {
+                unlink($path);
+            }
+
+            if (is_dir($directory)) {
+                rmdir($directory);
+            }
+        }
     }
 
     public function testWhitelistPostAddCreatesEntryAndRedirects(): void
@@ -1257,6 +1314,35 @@ final class AdminControllerTest extends TestCase
         }
     }
 
+    public function testRecoveryRejectsExpiredToken(): void
+    {
+        $files = $this->settingsFiles();
+        file_put_contents($files['env'], implode(PHP_EOL, [
+            "RECOVERY_TOKEN_HASH='" . password_hash('real-token', PASSWORD_DEFAULT) . "'",
+            "RECOVERY_TOKEN_EXPIRES_AT='2000-01-01T00:00:00+00:00'",
+            '',
+        ]), FILE_APPEND);
+
+        try {
+            $controller = $this->makeController(
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+
+            $_GET = ['token' => 'real-token'];
+            $redirect = $controller->handle('admin/recovery');
+            $this->assertSame(302, $redirect['status']);
+
+            $_GET = [];
+            $result = $controller->handle('admin/recovery');
+            $this->assertSame(403, $result['status']);
+        } finally {
+            $_GET = [];
+            $this->removeSettingsFiles($files);
+        }
+    }
+
     public function testConfigExportAndBackupRejectMissingCsrfToken(): void
     {
         $files = $this->settingsFiles();
@@ -1282,6 +1368,58 @@ final class AdminControllerTest extends TestCase
         }
     }
 
+    public function testBackupRejectsDatabasePathOutsideStorage(): void
+    {
+        $files = $this->settingsFiles();
+        file_put_contents($files['env'], "DATABASE_PATH='/etc/passwd'" . PHP_EOL, FILE_APPEND);
+
+        try {
+            $controller = $this->makeController(
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+            $this->login($controller);
+
+            $_SERVER['REQUEST_METHOD'] = 'POST';
+            $_POST = ['csrf_token' => $this->csrfToken()];
+
+            $this->assertSame(403, $controller->handle('admin/backup')['status']);
+        } finally {
+            $_POST = [];
+            $this->removeSettingsFiles($files);
+        }
+    }
+
+    public function testBackupRejectsNonSqliteFileInStorage(): void
+    {
+        $filename = 'not-sqlite-' . bin2hex(random_bytes(6)) . '.sqlite';
+        $path = dirname(__DIR__, 2) . '/storage/' . $filename;
+        file_put_contents($path, 'not a sqlite database');
+        $files = $this->settingsFiles();
+        file_put_contents($files['env'], "DATABASE_PATH='storage/" . $filename . "'" . PHP_EOL, FILE_APPEND);
+
+        try {
+            $controller = $this->makeController(
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+            $this->login($controller);
+
+            $_SERVER['REQUEST_METHOD'] = 'POST';
+            $_POST = ['csrf_token' => $this->csrfToken()];
+
+            $this->assertSame(422, $controller->handle('admin/backup')['status']);
+        } finally {
+            $_POST = [];
+            if (is_file($path)) {
+                unlink($path);
+            }
+            $this->removeSettingsFiles($files);
+        }
+    }
+
     public function testConfigExportReturnsJson(): void
     {
         $files = $this->settingsFiles();
@@ -1301,6 +1439,45 @@ final class AdminControllerTest extends TestCase
             $this->assertSame(200, $result['status']);
             $this->assertSame('application/json; charset=utf-8', $result['headers']['Content-Type']);
             $this->assertIsArray(json_decode($result['body'], true));
+        } finally {
+            $_POST = [];
+            $this->removeSettingsFiles($files);
+        }
+    }
+
+    public function testConfigImportDoesNotWriteSettingsWhenFormValidationFails(): void
+    {
+        $files = $this->settingsFiles();
+
+        try {
+            $controller = $this->makeController(
+                envPath: $files['env'],
+                adminConfigPath: $files['admin'],
+                securityConfigPath: $files['security']
+            );
+            $this->login($controller);
+
+            $_SERVER['REQUEST_METHOD'] = 'POST';
+            $_POST = [
+                'csrf_token' => $this->csrfToken(),
+                'config_json' => json_encode([
+                    'settings' => [
+                        'app_url' => 'https://changed.example.com',
+                    ],
+                    'forms' => [
+                        'bad_form' => [
+                            'recipient' => 'not-an-email',
+                            'allowed_origins' => ['https://example.com'],
+                        ],
+                    ],
+                ], JSON_THROW_ON_ERROR),
+            ];
+
+            $result = $controller->handle('admin/config/import');
+
+            $this->assertSame(422, $result['status']);
+            $this->assertStringContainsString("APP_URL='https://forms.example.com'", (string) file_get_contents($files['env']));
+            $this->assertStringNotContainsString('changed.example.com', (string) file_get_contents($files['env']));
         } finally {
             $_POST = [];
             $this->removeSettingsFiles($files);

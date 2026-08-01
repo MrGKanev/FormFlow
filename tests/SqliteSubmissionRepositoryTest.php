@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace formflow\Tests;
 
+use PDO;
 use formflow\SqliteSubmissionRepository;
 use PHPUnit\Framework\TestCase;
 
@@ -177,5 +178,80 @@ final class SqliteSubmissionRepositoryTest extends TestCase
         $repository->delete($id);
 
         $this->assertCount(0, $repository->findPaginated(null, null, 1, 10, search: 'Lovelace'));
+    }
+
+    public function testDeleteRemovesStoredUploadFiles(): void
+    {
+        $directory = sys_get_temp_dir() . '/formflow-repository-upload-' . bin2hex(random_bytes(6));
+        mkdir($directory);
+        $path = $directory . '/stored-file.pdf';
+        file_put_contents($path, 'pdf');
+        $repository = new SqliteSubmissionRepository(':memory:', $directory);
+        $id = $repository->create('contact', [
+            'attachment' => [
+                'type' => 'upload',
+                'original_name' => 'document.pdf',
+                'stored_name' => 'stored-file.pdf',
+            ],
+        ], null);
+
+        try {
+            $repository->delete($id);
+
+            $this->assertFileDoesNotExist($path);
+        } finally {
+            if (is_file($path)) {
+                unlink($path);
+            }
+
+            if (is_dir($directory)) {
+                rmdir($directory);
+            }
+        }
+    }
+
+    public function testDeleteOlderThanRemovesStoredUploadFiles(): void
+    {
+        $directory = sys_get_temp_dir() . '/formflow-repository-upload-' . bin2hex(random_bytes(6));
+        mkdir($directory);
+        $databasePath = $directory . '/submissions.sqlite';
+        $uploadDirectory = $directory . '/uploads';
+        mkdir($uploadDirectory);
+        $uploadPath = $uploadDirectory . '/stored-file.pdf';
+        file_put_contents($uploadPath, 'pdf');
+        $repository = new SqliteSubmissionRepository($databasePath, $uploadDirectory);
+        $id = $repository->create('contact', [
+            'attachment' => [
+                'type' => 'upload',
+                'original_name' => 'document.pdf',
+                'stored_name' => 'stored-file.pdf',
+            ],
+        ], null);
+        $pdo = new PDO('sqlite:' . $databasePath);
+        $statement = $pdo->prepare('UPDATE submissions SET created_at = :created_at WHERE id = :id');
+        $statement->execute(['created_at' => gmdate('c', time() - (200 * 86400)), 'id' => $id]);
+
+        try {
+            $this->assertSame(1, $repository->deleteOlderThan(180));
+            $this->assertFileDoesNotExist($uploadPath);
+        } finally {
+            foreach (glob($uploadDirectory . '/*') ?: [] as $file) {
+                unlink($file);
+            }
+
+            if (is_dir($uploadDirectory)) {
+                rmdir($uploadDirectory);
+            }
+
+            foreach (glob($directory . '/*') ?: [] as $file) {
+                if (is_file($file)) {
+                    unlink($file);
+                }
+            }
+
+            if (is_dir($directory)) {
+                rmdir($directory);
+            }
+        }
     }
 }

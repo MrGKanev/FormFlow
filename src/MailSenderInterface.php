@@ -6,6 +6,6 @@ namespace formflow;
 
 interface MailSenderInterface
 {
-    /** @param array<string, string> $fields */
+    /** @param array<string, mixed> $fields */
     public function send(string $recipient, string $subject, array $fields): void;
 }

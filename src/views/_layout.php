@@ -60,7 +60,10 @@ try {
             <span class="theme-toggle-icon" aria-hidden="true"></span>
             <span data-theme-label>Dark</span>
         </button>
-        <a href="/admin/logout" class="nav-logout">Log out</a>
+        <form method="POST" action="/admin/logout" class="inline">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars((string) ($_SESSION['csrf_token'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
+            <button type="submit" class="nav-logout">Log out</button>
+        </form>
     </div>
 </nav>
 <?php else: ?>

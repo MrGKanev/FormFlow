@@ -80,7 +80,7 @@ $globalStatus = static fn (string $key): string => (string) ($integrationSetting
             </select>
         </label>
         <label class="checkbox-label">
-            <input type="checkbox" name="require_api_key" value="1"<?= array_key_exists('require_api_key', $values) ? ' checked' : '' ?>>
+            <input type="checkbox" name="require_api_key" value="1"<?= $values === [] || !empty($values['require_api_key']) ? ' checked' : '' ?>>
             <span>Require API key</span>
         </label>
         <label class="span-2">

@@ -11,7 +11,7 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
 {
     private PDO $pdo;
 
-    public function __construct(string $databasePath)
+    public function __construct(string $databasePath, private readonly string $uploadDirectory = '')
     {
         if ($databasePath !== ':memory:') {
             $directory = dirname($databasePath);
@@ -108,18 +108,32 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
 
     public function delete(int $submissionId): void
     {
+        $submission = $this->find($submissionId);
         $statement = $this->pdo->prepare('DELETE FROM submissions WHERE id = :id');
         $statement->execute(['id' => $submissionId]);
+
+        if ($statement->rowCount() > 0 && $submission !== null) {
+            $this->deletePayloadUploads((string) $submission['payload']);
+        }
     }
 
     public function deleteOlderThan(int $days): int
     {
+        $cutoff = gmdate('c', time() - (max(1, $days) * 86400));
+        $payloads = $this->payloadsOlderThan($cutoff);
         $statement = $this->pdo->prepare(
             'DELETE FROM submissions WHERE created_at < :cutoff'
         );
-        $statement->execute(['cutoff' => gmdate('c', time() - (max(1, $days) * 86400))]);
+        $statement->execute(['cutoff' => $cutoff]);
+        $deleted = $statement->rowCount();
 
-        return $statement->rowCount();
+        if ($deleted > 0) {
+            foreach ($payloads as $payload) {
+                $this->deletePayloadUploads($payload);
+            }
+        }
+
+        return $deleted;
     }
 
     public function find(int $submissionId): ?array
@@ -286,6 +300,88 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         $statement->execute($params);
 
         return (int) $statement->fetch()['total'];
+    }
+
+    public function oldestCreatedAtByStatus(string $status): ?string
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT created_at FROM submissions
+             WHERE status = :status
+             ORDER BY created_at ASC, id ASC
+             LIMIT 1'
+        );
+        $statement->execute(['status' => $status]);
+        $row = $statement->fetch();
+
+        return $row === false ? null : (string) $row['created_at'];
+    }
+
+    /** @return list<string> */
+    private function payloadsOlderThan(string $cutoff): array
+    {
+        $statement = $this->pdo->prepare('SELECT payload FROM submissions WHERE created_at < :cutoff');
+        $statement->execute(['cutoff' => $cutoff]);
+
+        return array_values(array_map('strval', array_column($statement->fetchAll(), 'payload')));
+    }
+
+    private function deletePayloadUploads(string $payloadJson): void
+    {
+        if ($this->uploadDirectory === '') {
+            return;
+        }
+
+        $payload = json_decode($payloadJson, true);
+
+        if (!is_array($payload)) {
+            return;
+        }
+
+        foreach ($payload as $value) {
+            if (!is_array($value) || ($value['type'] ?? null) !== 'upload') {
+                continue;
+            }
+
+            $basename = $this->uploadBasename($value);
+
+            if ($basename === null) {
+                continue;
+            }
+
+            $path = rtrim($this->uploadDirectory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $basename;
+
+            if (is_file($path) && $this->pathIsWithin($path, $this->uploadDirectory)) {
+                @unlink($path);
+            }
+        }
+    }
+
+    /** @param array<string, mixed> $upload */
+    private function uploadBasename(array $upload): ?string
+    {
+        $storedName = trim((string) ($upload['stored_name'] ?? ''));
+
+        if ($storedName === '' && isset($upload['relative_path'])) {
+            $storedName = basename((string) $upload['relative_path']);
+        }
+
+        if ($storedName === '' || $storedName !== basename($storedName)) {
+            return null;
+        }
+
+        return $storedName;
+    }
+
+    private function pathIsWithin(string $path, string $root): bool
+    {
+        $rootPath = realpath($root);
+        $realPath = realpath($path);
+
+        if ($rootPath === false || $realPath === false) {
+            return false;
+        }
+
+        return $realPath === $rootPath || str_starts_with($realPath, rtrim($rootPath, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR);
     }
 
     /** @return array{0: string, 1: array<string, string>} */

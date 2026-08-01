@@ -75,6 +75,9 @@ $captchaSnippet = static function (string $provider, string $siteKey): array {
             }
             $apiKey = $apiKeys[$formId]['api_key'] ?? '';
             $provider = $captchaProvider($config);
+            $allowedOriginCount = is_array($config['allowed_origins'] ?? null) ? count($config['allowed_origins']) : 0;
+            $rateLimit = is_array($config['rate_limit_per_ip'] ?? null) ? $config['rate_limit_per_ip'] : [];
+            $rateLimitLabel = ((int) ($rateLimit['max'] ?? 5)) . ' / ' . ((int) ($rateLimit['window_minutes'] ?? 10)) . 'm';
             [$captchaMarkup, $captchaScript] = $captchaSnippet($provider, $captchaSiteKeys[$provider] ?? '');
             $snippet = '<form method="POST" action="' . $endpoint . '" enctype="multipart/form-data">' . PHP_EOL
                 . '  <input type="hidden" name="_key" value="' . $apiKey . '">' . PHP_EOL
@@ -91,6 +94,9 @@ $captchaSnippet = static function (string $provider, string $siteKey): array {
                 <span><?= htmlspecialchars((string) ($config['recipient'] ?? ''), ENT_QUOTES, 'UTF-8') ?></span>
                 <code>/<?= htmlspecialchars($formId, ENT_QUOTES, 'UTF-8') ?></code>
                 <span><?= $apiKey !== '' || !empty($config['require_api_key']) ? 'API key required' : 'API key optional' ?></span>
+                <span>CAPTCHA: <?= htmlspecialchars($provider, ENT_QUOTES, 'UTF-8') ?></span>
+                <span>Allowed origins: <?= $allowedOriginCount ?></span>
+                <span>Rate limit: <?= htmlspecialchars($rateLimitLabel, ENT_QUOTES, 'UTF-8') ?></span>
                 <textarea readonly rows="7"><?= htmlspecialchars($snippet, ENT_QUOTES, 'UTF-8') ?></textarea>
                 <span class="form-actions">
                     <a class="button secondary compact" href="/admin/forms/<?= rawurlencode((string) $formId) ?>/edit">Edit</a>

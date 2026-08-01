@@ -9,7 +9,7 @@ use RuntimeException;
 
 final class FakeMailSender implements MailSenderInterface
 {
-    /** @var list<array{recipient: string, subject: string, fields: array<string, string>}> */
+    /** @var list<array{recipient: string, subject: string, fields: array<string, mixed>}> */
     public array $sentMessages = [];
 
     public bool $shouldThrow = false;

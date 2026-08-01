@@ -42,7 +42,8 @@ final class FormHandler
             ];
         }
 
-        $config = $this->forms[$formId];
+        $rawConfig = $this->forms[$formId];
+        $config = FormConfigValidator::normalize($formId, $rawConfig);
 
         $this->assertAllowedOrigin($config);
 
@@ -105,7 +106,7 @@ final class FormHandler
 
         $spamFilter = new SpamFilter($config['blocked_patterns'] ?? []);
 
-        if ($spamFilter->isSpam($fields)) {
+        if ($spamFilter->isSpam(SubmissionPayloadFormatter::displayFields($fields))) {
             $this->repository->create($formId, $fields, $ipHash, 'blocked_spam');
 
             return [
@@ -143,7 +144,7 @@ final class FormHandler
                 $this->mailService->send(
                     (string) $config['recipient'],
                     (string) ($config['subject'] ?? 'New form submission'),
-                    $fields
+                    SubmissionPayloadFormatter::displayFields($fields)
                 );
 
                 $this->repository->markSent($submissionId);
@@ -155,7 +156,7 @@ final class FormHandler
         }
 
         try {
-            $channels = array_key_exists('notification_channels', $config)
+            $channels = array_key_exists('notification_channels', $rawConfig)
                 ? (array) $config['notification_channels']
                 : null;
             $overrides = is_array($config['notification_overrides'] ?? null)
@@ -276,7 +277,7 @@ final class FormHandler
         return $result;
     }
 
-    /** @return array<string, string> */
+    /** @return array<string, mixed> */
     private function extractUploadedFiles(array $files, array $policy): array
     {
         if ($files === [] || $this->uploadDirectory === '') {
@@ -426,12 +427,12 @@ final class FormHandler
         }
     }
 
-    /** @param array{name: string, tmp_name: string, error: int, size: int} $file @param array<string, string> $stored */
+    /** @param array{name: string, tmp_name: string, error: int, size: int} $file @param array<string, mixed> $stored */
     private function storeUploadedFile(string $field, array $file, array &$stored): void
     {
-
         $safeName = preg_replace('/[^A-Za-z0-9._-]+/', '-', basename($file['name'])) ?: 'upload.bin';
-        $target = rtrim($this->uploadDirectory, '/') . '/' . gmdate('YmdHis') . '-' . bin2hex(random_bytes(6)) . '-' . $safeName;
+        $storedName = gmdate('YmdHis') . '-' . bin2hex(random_bytes(6)) . '-' . $safeName;
+        $target = rtrim($this->uploadDirectory, '/') . '/' . $storedName;
         $moved = is_uploaded_file($file['tmp_name'])
             ? move_uploaded_file($file['tmp_name'], $target)
             : rename($file['tmp_name'], $target);
@@ -440,7 +441,30 @@ final class FormHandler
             throw new InvalidArgumentException(sprintf('Upload "%s" could not be stored.', $field));
         }
 
-        $stored[$field] = $file['name'] . ' (' . $target . ')';
+        $stored[$field] = [
+            'type' => 'upload',
+            'original_name' => $file['name'],
+            'stored_name' => $storedName,
+            'size_bytes' => $file['size'],
+            'mime_type' => $this->detectMimeType($target),
+        ];
+    }
+
+    private function detectMimeType(string $path): string
+    {
+        if (!is_file($path) || !function_exists('finfo_open')) {
+            return 'application/octet-stream';
+        }
+
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+
+        if ($finfo === false) {
+            return 'application/octet-stream';
+        }
+
+        $mimeType = finfo_file($finfo, $path);
+
+        return is_string($mimeType) && $mimeType !== '' ? $mimeType : 'application/octet-stream';
     }
 
     private function isSystemField(string $field): bool

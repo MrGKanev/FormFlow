@@ -205,8 +205,11 @@ nav.top a {
     align-items: center;
     min-height: 2.25rem;
     padding: 0 0.75rem;
+    border: 0;
     border-radius: var(--radius-sm);
+    background: transparent;
     color: var(--muted);
+    cursor: pointer;
     font-size: 0.9rem;
     font-weight: 620;
 }
@@ -960,6 +963,14 @@ code {
     line-height: 1.45;
     overflow-wrap: anywhere;
     word-break: break-word;
+}
+
+.status-list {
+    display: grid;
+    gap: 0.5rem;
+    margin: 0;
+    padding-left: 1.25rem;
+    color: var(--text);
 }
 
 .setup-panel {

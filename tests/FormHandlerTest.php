@@ -151,6 +151,12 @@ final class FormHandlerTest extends TestCase
             $this->assertCount(1, glob($directory . '/*') ?: []);
             $payload = json_decode((string) $repository->find(1)['payload'], true, flags: JSON_THROW_ON_ERROR);
             $this->assertArrayHasKey('attachment', $payload);
+            $this->assertSame('upload', $payload['attachment']['type']);
+            $this->assertSame('document.PDF', $payload['attachment']['original_name']);
+            $this->assertNotSame('', $payload['attachment']['stored_name']);
+            $this->assertSame(basename((string) $payload['attachment']['stored_name']), $payload['attachment']['stored_name']);
+            $this->assertArrayNotHasKey('relative_path', $payload['attachment']);
+            $this->assertArrayNotHasKey('path', $payload['attachment']);
         } finally {
             foreach (glob($directory . '/*') ?: [] as $file) {
                 unlink($file);

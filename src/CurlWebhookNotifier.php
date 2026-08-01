@@ -65,13 +65,13 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
         }
     }
 
-    /** @param array<string, string> $fields */
+    /** @param array<string, mixed> $fields */
     private function summary(string $formId, array $fields): string
     {
         $lines = ['New formflow submission: ' . $formId];
 
-        foreach (array_slice($fields, 0, 8, true) as $key => $value) {
-            $lines[] = ucfirst(str_replace('_', ' ', (string) $key)) . ': ' . mb_substr((string) $value, 0, 240);
+        foreach (array_slice(SubmissionPayloadFormatter::displayFields($fields), 0, 8, true) as $key => $value) {
+            $lines[] = ucfirst(str_replace('_', ' ', (string) $key)) . ': ' . mb_substr($value, 0, 240);
         }
 
         return implode(PHP_EOL, $lines);
@@ -96,7 +96,7 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
         return $value !== '' ? $value : null;
     }
 
-    /** @param array<string, string|array<string, string>> $payload */
+    /** @param array<string, mixed> $payload */
     private function deliver(string $formId, string $channel, string $url, array $payload): void
     {
         if ($this->defer) {

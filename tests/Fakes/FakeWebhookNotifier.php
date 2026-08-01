@@ -8,7 +8,7 @@ use formflow\WebhookNotifierInterface;
 
 final class FakeWebhookNotifier implements WebhookNotifierInterface
 {
-    /** @var list<array{form_id: string, fields: array<string, string>, channels: list<string>|null, overrides: array<string, string>}> */
+    /** @var list<array{form_id: string, fields: array<string, mixed>, channels: list<string>|null, overrides: array<string, string>}> */
     public array $notifications = [];
 
     public function notify(string $formId, array $fields, ?array $channels = null, array $overrides = []): void

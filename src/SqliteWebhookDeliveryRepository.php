@@ -149,6 +149,20 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
         return (int) $statement->fetch()['total'];
     }
 
+    public function oldestCreatedAtByStatus(string $status): ?string
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT created_at FROM webhook_deliveries
+             WHERE status = :status
+             ORDER BY created_at ASC, id ASC
+             LIMIT 1'
+        );
+        $statement->execute(['status' => $status]);
+        $row = $statement->fetch();
+
+        return $row === false ? null : (string) $row['created_at'];
+    }
+
     private function createSchema(): void
     {
         $this->pdo->exec(

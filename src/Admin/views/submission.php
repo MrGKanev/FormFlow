@@ -2,6 +2,17 @@
 /** @var array<string, mixed> $submission */
 /** @var string|null $error */
 $payload = json_decode((string) $submission['payload'], true) ?? [];
+$displayPayload = \formflow\SubmissionPayloadFormatter::displayFields(is_array($payload) ? $payload : []);
+$uploads = [];
+
+if (is_array($payload)) {
+    foreach ($payload as $field => $value) {
+        if (is_array($value) && ($value['type'] ?? null) === 'upload') {
+            $uploads[(string) $field] = $value;
+        }
+    }
+}
+
 $submissionStatus = (string) $submission['status'];
 $statusClass = 'status-' . preg_replace('/[^a-z0-9_-]+/i', '-', strtolower($submissionStatus));
 ?>
@@ -56,19 +67,44 @@ $statusClass = 'status-' . preg_replace('/[^a-z0-9_-]+/i', '-', strtolower($subm
     </table>
 </div>
 
+<?php if ($uploads !== []): ?>
+    <div class="section-heading">
+        <h2>Uploads</h2>
+    </div>
+    <div class="table-wrap">
+        <table class="key-value">
+            <tbody>
+                <?php foreach ($uploads as $field => $upload): ?>
+                    <tr>
+                        <th><?= htmlspecialchars($field, ENT_QUOTES, 'UTF-8') ?></th>
+                        <td>
+                            <a class="button secondary" href="/admin/submissions/<?= (int) $submission['id'] ?>/uploads/<?= rawurlencode($field) ?>">
+                                Download <?= htmlspecialchars((string) ($upload['original_name'] ?? 'upload'), ENT_QUOTES, 'UTF-8') ?>
+                            </a>
+                            <?php if (isset($upload['size_bytes'])): ?>
+                                <span class="muted"><?= htmlspecialchars(\formflow\SubmissionPayloadFormatter::displayValue($upload), ENT_QUOTES, 'UTF-8') ?></span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+<?php endif; ?>
+
 <div class="section-heading">
     <h2>Payload</h2>
 </div>
 <div class="table-wrap">
     <table class="key-value">
         <tbody>
-            <?php foreach ($payload as $field => $value): ?>
+            <?php foreach ($displayPayload as $field => $value): ?>
                 <tr>
                     <th><?= htmlspecialchars((string) $field, ENT_QUOTES, 'UTF-8') ?></th>
                     <td><?= nl2br(htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8')) ?></td>
                 </tr>
             <?php endforeach; ?>
-            <?php if ($payload === []): ?>
+            <?php if ($displayPayload === []): ?>
                 <tr><td colspan="2" class="empty-state">No payload fields were stored for this submission.</td></tr>
             <?php endif; ?>
         </tbody>

@@ -15,7 +15,8 @@ return [
 
         'success_redirect' => 'https://example.com/thank-you',
 
-        'turnstile' => true,
+        'captcha_provider' => 'turnstile',
+        'require_api_key' => true,
 
         'rate_limit_per_ip' => [
             'max' => 5,
@@ -41,6 +42,7 @@ return [
 
         'success_redirect' => 'https://support.example.com/thank-you',
 
-        'turnstile' => true,
+        'captcha_provider' => 'turnstile',
+        'require_api_key' => true,
     ],
 ];

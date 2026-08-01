@@ -23,6 +23,8 @@ Minimal self-hosted PHP backend for accepting HTML forms (like Web3Forms/Formspr
 composer install
 ```
 
+`composer.lock` is the source of truth for installed packages. Run `composer install` after dependency changes and before tests or deployments; `vendor/` is generated runtime state.
+
 Alternatively, skip the wizard and configure by hand:
 
 ```bash
@@ -68,7 +70,7 @@ curl -X POST http://localhost:8080/contact \
 
 If `contact` has an API key, also add `-F "_key=<the generated key>"`. Database-backed forms receive a key automatically when created; copy it from their integration snippet on `/admin/forms`.
 
-By default `contact` has `'turnstile' => true`, and the command above does not send `cf-turnstile-response` - expect `422 CAPTCHA validation failed`. For a local smoke test without a real Cloudflare token, temporarily change it to `'turnstile' => false` in `config/forms.php`, or send a valid token obtained from a real widget.
+By default `contact` has `'captcha_provider' => 'turnstile'`, and the command above does not send `cf-turnstile-response` - expect `422 CAPTCHA validation failed`. For a local smoke test without a real Cloudflare token, temporarily change it to `'captcha_provider' => 'none'` in `config/forms.php`, or send a valid token obtained from a real widget.
 
 ## Admin panel
 
@@ -104,6 +106,8 @@ Requires:
 
 ```bash
 composer install
+composer validate --strict
+composer audit --no-interaction
 vendor/bin/phpunit
 ```
 
@@ -132,6 +136,8 @@ Then run the mail worker from cron:
 ```bash
 php bin/formflow mail:work --limit=100
 ```
+
+Each worker run records a heartbeat under `storage/runtime`, which is shown on `/admin/system`.
 
 Webhook delivery can stay synchronous, or be queued by setting:
 
@@ -167,7 +173,7 @@ The included image serves `public/` through Apache and mounts `storage/` for SQL
 ## Configuration
 
 - Forms can be created from `/admin/forms`. Starter/static forms can also live in `config/forms.php`.
-- Per form: recipient, `allowed_origins`, `subject`, `success_redirect`, `captcha_provider`, `require_api_key`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`, upload limits, selected notification channels, and optional per-form integration overrides. Legacy configs with `turnstile: true` still behave as `captcha_provider: turnstile`. Upload rules support a size limit (1–100 MB), file-count limit (1–20), and an optional allow-list of filename extensions. Form endpoints accept all submitted user fields; system fields such as `_key`, `_website`, `cf-turnstile-response`, `h-captcha-response`, `g-recaptcha-response`, `frc-captcha-response`, and `csrf_token` are not stored or emailed. A key is generated automatically with every new database-backed form and included in its integration snippet.
+- Per form: recipient, `allowed_origins`, `subject`, `success_redirect`, `captcha_provider`, `require_api_key`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`, upload limits, selected delivery channels, and optional per-form integration overrides. Legacy configs with `turnstile: true` still behave as `captcha_provider: turnstile`, but generated configs use `captcha_provider`. Upload rules support a size limit (1–100 MB), file-count limit (1–20), and an optional allow-list of filename extensions. Form endpoints accept all submitted user fields; system fields such as `_key`, `_website`, `cf-turnstile-response`, `h-captcha-response`, `g-recaptcha-response`, `frc-captcha-response`, and `csrf_token` are not stored or emailed. A key is generated automatically with every new database-backed form and included in its integration snippet. New admin-created forms require the API key by default.
 - Global app settings can be edited from `/admin/settings`. It writes selected values to `.env`, login-rate-limit values to `config/admin.php`, and the global IP blocklist to `config/security.php`. Saving one Settings tab preserves values configured in the other tabs.
 - Mail can be configured with standard SMTP fields: `SMTP_HOST`, `SMTP_PORT`, `SMTP_ENCRYPTION` (`tls`, `ssl`, or `none`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM`, and `MAIL_FROM_NAME`. `MAILER_DSN` is still supported as an advanced override; when set, it takes precedence over the individual SMTP fields.
 - Notification integrations are configured on `/admin/integrations`:
@@ -176,7 +182,7 @@ The included image serves `public/` through Apache and mounts `storage/` for SQL
   - Telegram: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
   - Generic webhook: `GENERIC_WEBHOOK_URL`; receives `{"form_id":"…","fields":{…}}`, which works with Zapier, Make, n8n, or a custom service.
   Each form selects which channels receive its submissions. New forms start with no selected notification channels. A form can override the global Discord, Slack, Telegram, or generic webhook settings when it needs a form-specific destination; blank override fields use the global integration settings. Existing runtime configs without a saved selection still notify every configured global integration. Every webhook delivery is attempted up to three times in sync mode, or by `webhooks:retry` in queue mode, and the final result is visible in `/admin/delivery`. Notifications never prevent a successfully stored submission from being accepted.
-- File uploads are accepted from multipart forms and stored under `storage/uploads`; payloads store the original filename plus local storage path. Configure per-form size, count, and extension rules before exposing an upload field in the form markup. Dangerous executable/script extensions are rejected even without an allow-list, and common file types are checked with MIME detection when PHP's `fileinfo` support is available.
+- File uploads are accepted from multipart forms and stored under `storage/uploads`; payloads store metadata only: original filename, stored basename, size, and MIME type. Admin users download uploads through the submission detail page instead of exposing filesystem paths. Deleting submissions or running retention cleanup removes attached upload files as well. Configure per-form size, count, and extension rules before exposing an upload field in the form markup. Dangerous executable/script extensions are rejected even without an allow-list, and common file types are checked with MIME detection when PHP's `fileinfo` support is available.
 - CAPTCHA providers are configured on `/admin/settings?tab=protection`: Cloudflare Turnstile (`TURNSTILE_SECRET`, `TURNSTILE_SITE_KEY`), hCaptcha (`HCAPTCHA_SECRET`, `HCAPTCHA_SITE_KEY`), Google reCAPTCHA v2 (`RECAPTCHA_SECRET`, `RECAPTCHA_SITE_KEY`), and Friendly Captcha (`FRIENDLY_CAPTCHA_API_KEY`, `FRIENDLY_CAPTCHA_SITE_KEY`). Form snippets include the matching widget script when the selected provider has a site key.
 - Admin 2FA uses TOTP secrets (`ADMIN_TOTP_SECRET` for the bootstrap user, optional TOTP secret for DB-backed users).
 - `config/security.php` - global IP blocklist (exact IP addresses or IPv4 CIDR ranges).
