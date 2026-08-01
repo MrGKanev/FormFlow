@@ -9,8 +9,10 @@ use formflow\AdminIpWhitelistInterface;
 use formflow\AdminUserRepositoryInterface;
 use formflow\AdminWhitelistRepositoryInterface;
 use formflow\AuditLogRepositoryInterface;
+use formflow\Clock;
 use formflow\FormApiKeyRepositoryInterface;
 use formflow\FormConfigRepositoryInterface;
+use formflow\HttpResponse;
 use formflow\MailSenderInterface;
 use formflow\SubmissionRepositoryInterface;
 use formflow\Totp;
@@ -55,7 +57,7 @@ final class AdminController
         );
     }
 
-    public function handle(string $path): array
+    public function handle(string $path): HttpResponse
     {
         if (session_status() !== PHP_SESSION_ACTIVE) {
             session_start();
@@ -68,113 +70,75 @@ final class AdminController
         $clientIp = $this->clientIp();
 
         if ($clientIp === null || !$this->ipWhitelist->isAllowed($clientIp)) {
-            return $this->htmlResponse(403, '<h1>Forbidden</h1>');
+            return HttpResponse::fromArray($this->htmlResponse(403, '<h1>Forbidden</h1>'));
         }
 
         if ($path === 'admin/logout') {
             if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-                return ['status' => 302, 'body' => '', 'redirect' => '/admin/login'];
+                return HttpResponse::redirect('/admin/login');
             }
 
             if (!$this->verifyCsrfToken()) {
-                return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
+                return HttpResponse::fromArray($this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>'));
             }
 
             $this->auth->logout();
 
-            return ['status' => 302, 'body' => '', 'redirect' => '/admin/login'];
+            return HttpResponse::redirect('/admin/login');
         }
 
         if ($path === 'admin/login') {
-            return $this->handleLogin();
+            return HttpResponse::fromArray($this->handleLogin());
         }
 
         if ($path === 'admin/recovery') {
-            return $this->handleRecovery();
+            return HttpResponse::fromArray($this->handleRecovery());
         }
 
         if (!$this->auth->isLoggedIn()) {
-            return ['status' => 302, 'body' => '', 'redirect' => '/admin/login'];
+            return HttpResponse::redirect('/admin/login');
         }
 
-        if ($path === 'admin') {
-            return $this->handleDashboard();
+        return HttpResponse::fromArray($this->dispatchAuthenticatedRoute($path));
+    }
+
+    /** @return array{status: int, body: mixed, redirect?: string|null, headers?: array<string, string>} */
+    private function dispatchAuthenticatedRoute(string $path): array
+    {
+        $exactRoutes = [
+            'admin' => $this->handleDashboard(...),
+            'admin/export' => $this->handleExport(...),
+            'admin/submissions/bulk' => $this->handleSubmissionBulkAction(...),
+            'admin/delivery' => $this->handleDelivery(...),
+            'admin/system' => $this->handleSystem(...),
+            'admin/whitelist' => $this->handleWhitelist(...),
+            'admin/forms' => $this->handleForms(...),
+            'admin/forms/new' => $this->handleFormCreate(...),
+            'admin/settings' => $this->handleSettings(...),
+            'admin/integrations' => $this->handleIntegrations(...),
+            'admin/users' => $this->handleUsers(...),
+            'admin/audit' => $this->handleAudit(...),
+            'admin/backup' => $this->handleBackup(...),
+            'admin/config/export' => $this->handleConfigExport(...),
+            'admin/config/import' => $this->handleConfigImport(...),
+        ];
+
+        if (isset($exactRoutes[$path])) {
+            return $exactRoutes[$path]();
         }
 
-        if ($path === 'admin/export') {
-            return $this->handleExport();
-        }
+        $patternRoutes = [
+            '#^admin/submissions/(\d+)$#' => fn (array $matches): array => $this->handleSubmissionDetail((int) $matches[1]),
+            '#^admin/submissions/(\d+)/uploads/([^/]+)$#' => fn (array $matches): array => $this->handleUploadDownload((int) $matches[1], rawurldecode((string) $matches[2])),
+            '#^admin/submissions/(\d+)/action$#' => fn (array $matches): array => $this->handleSubmissionAction((int) $matches[1]),
+            '#^admin/forms/([^/]+)/edit$#' => fn (array $matches): array => $this->handleFormEdit((string) $matches[1]),
+            '#^admin/forms/([^/]+)/delete$#' => fn (array $matches): array => $this->handleFormDelete((string) $matches[1]),
+        ];
 
-        if ($path === 'admin/submissions/bulk') {
-            return $this->handleSubmissionBulkAction();
-        }
-
-        if (preg_match('#^admin/submissions/(\d+)$#', $path, $matches) === 1) {
-            return $this->handleSubmissionDetail((int) $matches[1]);
-        }
-
-        if (preg_match('#^admin/submissions/(\d+)/uploads/([^/]+)$#', $path, $matches) === 1) {
-            return $this->handleUploadDownload((int) $matches[1], rawurldecode((string) $matches[2]));
-        }
-
-        if (preg_match('#^admin/submissions/(\d+)/action$#', $path, $matches) === 1) {
-            return $this->handleSubmissionAction((int) $matches[1]);
-        }
-
-        if ($path === 'admin/delivery') {
-            return $this->handleDelivery();
-        }
-
-        if ($path === 'admin/system') {
-            return $this->handleSystem();
-        }
-
-        if ($path === 'admin/whitelist') {
-            return $this->handleWhitelist();
-        }
-
-        if ($path === 'admin/forms') {
-            return $this->handleForms();
-        }
-
-        if ($path === 'admin/forms/new') {
-            return $this->handleFormCreate();
-        }
-
-        if (preg_match('#^admin/forms/([^/]+)/edit$#', $path, $matches) === 1) {
-            return $this->handleFormEdit((string) $matches[1]);
-        }
-
-        if (preg_match('#^admin/forms/([^/]+)/delete$#', $path, $matches) === 1) {
-            return $this->handleFormDelete((string) $matches[1]);
-        }
-
-        if ($path === 'admin/settings') {
-            return $this->handleSettings();
-        }
-
-        if ($path === 'admin/integrations') {
-            return $this->handleIntegrations();
-        }
-
-        if ($path === 'admin/users') {
-            return $this->handleUsers();
-        }
-
-        if ($path === 'admin/audit') {
-            return $this->handleAudit();
-        }
-
-        if ($path === 'admin/backup') {
-            return $this->handleBackup();
-        }
-
-        if ($path === 'admin/config/export') {
-            return $this->handleConfigExport();
-        }
-
-        if ($path === 'admin/config/import') {
-            return $this->handleConfigImport();
+        foreach ($patternRoutes as $pattern => $handler) {
+            if (preg_match($pattern, $path, $matches) === 1) {
+                return $handler($matches);
+            }
         }
 
         return $this->htmlResponse(404, '<h1>Not found</h1>');
@@ -688,7 +652,7 @@ final class AdminController
 
             if ($action === 'generate_recovery') {
                 $token = bin2hex(random_bytes(24));
-                $expiresAt = gmdate('c', time() + 3600);
+                $expiresAt = Clock::relativeIso(3600);
                 $this->writeEnvFile([
                     'RECOVERY_TOKEN_HASH' => password_hash($token, PASSWORD_DEFAULT),
                     'RECOVERY_TOKEN_EXPIRES_AT' => $expiresAt,
@@ -838,7 +802,7 @@ final class AdminController
         try {
             $this->mailSender->send($recipient, 'formflow test email', [
                 'message' => 'SMTP settings are working.',
-                'sent_at' => gmdate('c'),
+                'sent_at' => Clock::nowIso(),
             ]);
             $this->recordAudit('settings.test_email', 'Sent test email to ' . $recipient . '.');
 
@@ -1054,7 +1018,7 @@ final class AdminController
 
         $expiresTimestamp = strtotime($expiresAt);
 
-        return $expiresTimestamp === false || $expiresTimestamp < time();
+        return $expiresTimestamp === false || $expiresTimestamp < Clock::nowTimestamp();
     }
 
     /** @param array<string, mixed> $upload */
@@ -1154,25 +1118,75 @@ final class AdminController
             return $this->htmlResponse(422, '<h1>' . htmlspecialchars($exception->getMessage(), ENT_QUOTES, 'UTF-8') . '</h1>');
         }
 
-        if ($prepared['settings'] !== null) {
-            $this->writeSettings($prepared['settings']);
-        }
+        $rollback = [
+            'settings' => $this->currentSettings(),
+            'security' => $this->securityConfig(),
+            'forms' => $this->formRepository->all(),
+        ];
 
-        if ($prepared['security'] !== null) {
-            $this->writeSecurityConfig(
-                $prepared['security']['blocked_ips'],
-                $prepared['security']['trusted_proxies'],
-                $prepared['security']['trusted_ip_headers']
+        try {
+            if ($prepared['settings'] !== null) {
+                $this->writeSettings($prepared['settings']);
+            }
+
+            if ($prepared['security'] !== null) {
+                $this->writeSecurityConfig(
+                    $prepared['security']['blocked_ips'],
+                    $prepared['security']['trusted_proxies'],
+                    $prepared['security']['trusted_ip_headers']
+                );
+            }
+
+            foreach ($prepared['forms'] as $formId => $config) {
+                $this->formRepository->update($formId, $config);
+            }
+        } catch (Throwable $exception) {
+            $this->restoreImportedConfig($rollback);
+
+            return $this->htmlResponse(
+                422,
+                '<h1>' . htmlspecialchars('Config import failed and was rolled back: ' . $exception->getMessage(), ENT_QUOTES, 'UTF-8') . '</h1>'
             );
-        }
-
-        foreach ($prepared['forms'] as $formId => $config) {
-            $this->formRepository->update($formId, $config);
         }
 
         $this->recordAudit('config.import', 'Imported configuration.');
 
         return ['status' => 302, 'body' => '', 'redirect' => '/admin/settings?saved=1'];
+    }
+
+    /**
+     * @param array{
+     *     settings: array<string, mixed>,
+     *     security: array<string, mixed>,
+     *     forms: array<string, array<string, mixed>>
+     * } $snapshot
+     */
+    private function restoreImportedConfig(array $snapshot): void
+    {
+        try {
+            $settings = $this->settingsService->settingsFromInput($snapshot['settings']);
+            $this->settingsService->writeSettings($settings);
+            $security = $this->settingsService->securityFromConfig($snapshot['security']);
+            $this->writeSecurityConfig(
+                $security['blocked_ips'],
+                $security['trusted_proxies'],
+                $security['trusted_ip_headers']
+            );
+
+            $currentForms = $this->formRepository->all();
+
+            foreach (array_keys($currentForms) as $formId) {
+                if (!array_key_exists($formId, $snapshot['forms'])) {
+                    $this->formRepository->delete((string) $formId);
+                }
+            }
+
+            foreach ($snapshot['forms'] as $formId => $config) {
+                $this->formRepository->update($formId, $config);
+            }
+        } catch (Throwable $rollbackException) {
+            error_log('Config import rollback failed: ' . $rollbackException->getMessage());
+        }
     }
 
     private function setupStatus(): array
@@ -1283,7 +1297,7 @@ final class AdminController
             return null;
         }
 
-        return hash_hmac('sha256', $ip . '|' . date('Y-m'), $this->ipHashSecret);
+        return hash_hmac('sha256', $ip . '|' . Clock::currentMonth(), $this->ipHashSecret);
     }
 
     private function htmlResponse(int $status, string $body): array

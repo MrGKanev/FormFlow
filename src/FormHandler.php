@@ -26,20 +26,14 @@ final class FormHandler
     ) {
     }
 
-    public function handle(string $formId): array
+    public function handle(string $formId): HttpResponse
     {
         if (!isset($this->forms[$formId])) {
-            return [
-                'status' => 404,
-                'body' => ['success' => false, 'message' => 'Form not found.'],
-            ];
+            return HttpResponse::json(404, ['success' => false, 'message' => 'Form not found.']);
         }
 
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-            return [
-                'status' => 405,
-                'body' => ['success' => false, 'message' => 'Method not allowed.'],
-            ];
+            return HttpResponse::json(405, ['success' => false, 'message' => 'Method not allowed.']);
         }
 
         $rawConfig = $this->forms[$formId];
@@ -63,20 +57,14 @@ final class FormHandler
         );
 
         if ($recentIpHits > (int) $perIpLimit['max']) {
-            return [
-                'status' => 429,
-                'body' => ['success' => false, 'message' => 'Too many submissions. Please try again later.'],
-            ];
+            return HttpResponse::json(429, ['success' => false, 'message' => 'Too many submissions. Please try again later.']);
         }
 
         $dailyLimit = (int) ($config['daily_limit'] ?? 200);
         $todayHits = $this->rateLimiter->countRecentHitsForForm($formId, 1440);
 
         if ($todayHits > $dailyLimit) {
-            return [
-                'status' => 429,
-                'body' => ['success' => false, 'message' => 'Daily submission limit reached for this form.'],
-            ];
+            return HttpResponse::json(429, ['success' => false, 'message' => 'Daily submission limit reached for this form.']);
         }
 
         $this->assertApiKey($formId, !empty($config['require_api_key']));
@@ -90,16 +78,16 @@ final class FormHandler
 
             $this->repository->create($formId, $honeypotFields, $ipHash, 'blocked_honeypot');
 
-            return [
-                'status' => 200,
-                'body' => ['success' => true, 'message' => 'Submission accepted.'],
-                'redirect' => $config['success_redirect'] ?? null,
-            ];
+            return HttpResponse::json(
+                200,
+                ['success' => true, 'message' => 'Submission accepted.'],
+                $config['success_redirect'] ?? null
+            );
         }
 
         $fields = array_merge(
             $this->extractFields($_POST),
-            $this->extractUploadedFiles($_FILES ?? [], $config['uploads'] ?? [])
+            $this->extractUploadedFiles($_FILES, $config['uploads'] ?? [])
         );
 
         $this->validateEmailField($fields);
@@ -109,11 +97,11 @@ final class FormHandler
         if ($spamFilter->isSpam(SubmissionPayloadFormatter::displayFields($fields))) {
             $this->repository->create($formId, $fields, $ipHash, 'blocked_spam');
 
-            return [
-                'status' => 200,
-                'body' => ['success' => true, 'message' => 'Submission accepted.'],
-                'redirect' => $config['success_redirect'] ?? null,
-            ];
+            return HttpResponse::json(
+                200,
+                ['success' => true, 'message' => 'Submission accepted.'],
+                $config['success_redirect'] ?? null
+            );
         }
 
         $captchaProvider = $this->captchaProvider($config);
@@ -125,10 +113,7 @@ final class FormHandler
                 : ($this->captchaVerifier?->verify($captchaProvider, $token, $this->clientIp()) ?? false);
 
             if (!$verified) {
-                return [
-                    'status' => 422,
-                    'body' => ['success' => false, 'message' => 'CAPTCHA validation failed.'],
-                ];
+                return HttpResponse::json(422, ['success' => false, 'message' => 'CAPTCHA validation failed.']);
             }
         }
 
@@ -163,14 +148,14 @@ final class FormHandler
         } catch (Throwable) {
         }
 
-        return [
-            'status' => 200,
-            'body' => [
+        return HttpResponse::json(
+            200,
+            [
                 'success' => true,
                 'message' => $this->deferMail ? 'Submission accepted.' : 'Submission sent successfully.',
             ],
-            'redirect' => $config['success_redirect'] ?? null,
-        ];
+            $config['success_redirect'] ?? null
+        );
     }
 
     private function assertAllowedOrigin(array $config): void
@@ -424,7 +409,7 @@ final class FormHandler
     private function storeUploadedFile(string $field, array $file, array &$stored): void
     {
         $safeName = preg_replace('/[^A-Za-z0-9._-]+/', '-', basename($file['name'])) ?: 'upload.bin';
-        $storedName = gmdate('YmdHis') . '-' . bin2hex(random_bytes(6)) . '-' . $safeName;
+        $storedName = Clock::compactTimestamp() . '-' . bin2hex(random_bytes(6)) . '-' . $safeName;
         $target = rtrim($this->uploadDirectory, '/') . '/' . $storedName;
         $moved = is_uploaded_file($file['tmp_name'])
             ? move_uploaded_file($file['tmp_name'], $target)
@@ -501,6 +486,6 @@ final class FormHandler
             return null;
         }
 
-        return hash_hmac('sha256', $ip . '|' . date('Y-m'), $this->ipHashSecret);
+        return hash_hmac('sha256', $ip . '|' . Clock::currentMonth(), $this->ipHashSecret);
     }
 }

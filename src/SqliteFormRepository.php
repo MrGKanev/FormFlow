@@ -56,7 +56,7 @@ final class SqliteFormRepository implements FormConfigRepositoryInterface
 
     public function create(string $formId, array $config): void
     {
-        $now = gmdate('c');
+        $now = Clock::nowIso();
 
         $statement = $this->pdo->prepare(
             'INSERT INTO forms (form_id, config_json, created_at, updated_at)
@@ -84,7 +84,7 @@ final class SqliteFormRepository implements FormConfigRepositoryInterface
                 updated_at = excluded.updated_at'
         );
 
-        $now = gmdate('c');
+        $now = Clock::nowIso();
 
         $statement->execute([
             'form_id' => $formId,

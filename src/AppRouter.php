@@ -149,7 +149,7 @@ final class AppRouter
         $health = [
             'status' => 'ok',
             'service' => 'formflow',
-            'time' => gmdate('c'),
+            'time' => Clock::nowIso(),
         ];
 
         if ($this->wantsJsonResponse()) {

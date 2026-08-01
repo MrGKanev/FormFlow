@@ -48,7 +48,7 @@ final class SqliteTotpReplayGuard implements TotpReplayGuardInterface
             $statement->execute([
                 'identity' => $identity,
                 'step' => $step,
-                'created_at' => gmdate('c'),
+                'created_at' => Clock::nowIso(),
             ]);
         } catch (PDOException $exception) {
             if (str_contains($exception->getMessage(), 'UNIQUE constraint failed')) {
@@ -68,7 +68,7 @@ final class SqliteTotpReplayGuard implements TotpReplayGuardInterface
         }
 
         // Steps are only ever checked within a 90-second window (3 * 30s), so anything older is dead weight.
-        $cutoff = gmdate('c', time() - 300);
+        $cutoff = Clock::relativeIso(-300);
 
         $this->pdo
             ->prepare('DELETE FROM totp_replay_steps WHERE created_at < :cutoff')

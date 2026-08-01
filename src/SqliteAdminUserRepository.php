@@ -65,7 +65,7 @@ final class SqliteAdminUserRepository implements AdminUserRepositoryInterface
                 'username' => $username,
                 'password_hash' => $passwordHash,
                 'totp_secret' => $totpSecret,
-                'created_at' => gmdate('c'),
+                'created_at' => Clock::nowIso(),
             ]);
         } catch (PDOException $exception) {
             if (str_contains($exception->getMessage(), 'UNIQUE constraint failed')) {

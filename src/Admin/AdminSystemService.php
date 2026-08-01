@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace formflow\Admin;
 
+use formflow\Clock;
 use formflow\SubmissionRepositoryInterface;
 use formflow\WebhookDeliveryRepositoryInterface;
 
@@ -169,7 +170,7 @@ final class AdminSystemService
             return 'Unknown';
         }
 
-        return self::humanDuration(max(0, time() - $timestamp));
+        return self::humanDuration(max(0, Clock::nowTimestamp() - $timestamp));
     }
 
     private function workerLastRun(string $worker): string

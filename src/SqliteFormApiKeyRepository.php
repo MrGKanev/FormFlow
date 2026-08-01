@@ -49,7 +49,7 @@ final class SqliteFormApiKeyRepository implements FormApiKeyRepositoryInterface
     public function regenerate(string $formId): string
     {
         $apiKey = bin2hex(random_bytes(32));
-        $now = gmdate('c');
+        $now = Clock::nowIso();
 
         $statement = $this->pdo->prepare(
             'INSERT INTO form_api_keys (form_id, api_key, created_at, updated_at)

@@ -56,7 +56,7 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
             ),
             'ip_hash' => $ipHash,
             'status' => $status,
-            'created_at' => gmdate('c'),
+            'created_at' => Clock::nowIso(),
         ]);
 
         return (int) $this->pdo->lastInsertId();
@@ -72,7 +72,7 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
 
         $statement->execute([
             'status' => 'sent',
-            'sent_at' => gmdate('c'),
+            'sent_at' => Clock::nowIso(),
             'id' => $submissionId,
         ]);
     }
@@ -101,7 +101,7 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         );
 
         $statement->execute([
-            'reviewed_at' => gmdate('c'),
+            'reviewed_at' => Clock::nowIso(),
             'id' => $submissionId,
         ]);
     }
@@ -119,7 +119,7 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
 
     public function deleteOlderThan(int $days): int
     {
-        $cutoff = gmdate('c', time() - (max(1, $days) * 86400));
+        $cutoff = Clock::relativeIso(-(max(1, $days) * 86400));
         $payloads = $this->payloadsOlderThan($cutoff);
         $statement = $this->pdo->prepare(
             'DELETE FROM submissions WHERE created_at < :cutoff'
@@ -279,9 +279,9 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
             SQL
         );
         $statement->execute([
-            'day_cutoff' => gmdate('c', time() - 86400),
-            'week_cutoff' => gmdate('c', time() - (7 * 86400)),
-            'month_cutoff' => gmdate('c', time() - (30 * 86400)),
+            'day_cutoff' => Clock::relativeIso(-86400),
+            'week_cutoff' => Clock::relativeIso(-(7 * 86400)),
+            'month_cutoff' => Clock::relativeIso(-(30 * 86400)),
         ]);
 
         return $statement->fetchAll();

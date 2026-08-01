@@ -46,7 +46,7 @@ final class SqliteAuditLogRepository implements AuditLogRepositoryInterface
             'username' => $username,
             'action' => $action,
             'detail' => mb_substr($detail, 0, 1000),
-            'created_at' => gmdate('c'),
+            'created_at' => Clock::nowIso(),
         ]);
     }
 

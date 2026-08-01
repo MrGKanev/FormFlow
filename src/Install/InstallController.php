@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace formflow\Install;
 
+use formflow\HttpResponse;
+use InvalidArgumentException;
+
 final class InstallController
 {
     private const REQUIRED_FIELDS = [
@@ -33,7 +36,7 @@ final class InstallController
     ) {
     }
 
-    public function handle(): array
+    public function handle(): HttpResponse
     {
         if (session_status() !== PHP_SESSION_ACTIVE) {
             session_start();
@@ -70,7 +73,7 @@ final class InstallController
         $this->writeEnv($_POST);
         $this->addAllowedIp();
 
-        return ['status' => 302, 'body' => '', 'redirect' => '/admin/login'];
+        return HttpResponse::redirect('/admin/login');
     }
 
     private function validate(array $input): ?string
@@ -164,7 +167,7 @@ final class InstallController
             '',
         ];
 
-        file_put_contents($this->envPath, implode(PHP_EOL, $lines));
+        $this->atomicWrite($this->envPath, implode(PHP_EOL, $lines) . PHP_EOL);
     }
 
     private function addAllowedIp(): void
@@ -202,7 +205,7 @@ final class InstallController
 
         PHP;
 
-        file_put_contents($this->adminConfigPath, $content);
+        $this->atomicWrite($this->adminConfigPath, $content);
 
         if (function_exists('opcache_invalidate')) {
             opcache_invalidate($this->adminConfigPath, true);
@@ -287,8 +290,27 @@ final class InstallController
         return hash_equals((string) ($_SESSION['csrf_token'] ?? ''), $token);
     }
 
-    private function htmlResponse(int $status, string $body): array
+    private function htmlResponse(int $status, string $body): HttpResponse
     {
-        return ['status' => $status, 'body' => $body, 'redirect' => null];
+        return HttpResponse::html($status, $body);
+    }
+
+    private function atomicWrite(string $path, string $content): void
+    {
+        $directory = dirname($path);
+        $temporaryPath = tempnam($directory, basename($path) . '.tmp.');
+
+        if ($temporaryPath === false) {
+            throw new InvalidArgumentException('Unable to create a temporary config file.');
+        }
+
+        try {
+            file_put_contents($temporaryPath, $content);
+            rename($temporaryPath, $path);
+        } finally {
+            if (is_file($temporaryPath)) {
+                unlink($temporaryPath);
+            }
+        }
     }
 }
