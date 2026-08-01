@@ -2,7 +2,7 @@
 /** @var array<string, string|int> $status */
 /** @var list<string> $warnings */
 $badge = static function (string $label, string|int $value): string {
-    if (in_array($value, ['Present', 'Writable', 'production', 'sync', 'queue', 'Outside public root', 'Deny rule present', 'No pending work', 'Not required'], true) || (is_int($value) && $value === 0)) {
+    if (in_array($value, ['Present', 'Present at request start', 'Writable', 'production', 'sync', 'queue', 'Outside public root', 'Deny rule present', 'No pending work', 'Not required'], true) || (is_int($value) && $value === 0)) {
         return 'good';
     }
 

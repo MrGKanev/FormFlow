@@ -47,16 +47,17 @@ final class AppRouter
             return;
         }
 
-        $forms = $this->factory->forms();
         $clientIp = $this->factory->clientIp($this->security);
 
         if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {
-            $this->dispatchAdmin($formId, $forms, $clientIp);
+            $databaseExistedAtRequestStart = $this->factory->databaseFileExists();
+
+            $this->dispatchAdmin($formId, $this->factory->forms(), $clientIp, $databaseExistedAtRequestStart);
 
             return;
         }
 
-        $this->dispatchForm($formId, $forms, $clientIp);
+        $this->dispatchForm($formId, $this->factory->forms(), $clientIp);
     }
 
     private function dispatchInstall(bool $envExists): void
@@ -164,9 +165,14 @@ final class AppRouter
     }
 
     /** @param array<string, array<string, mixed>> $forms */
-    private function dispatchAdmin(string $formId, array $forms, ?string $clientIp): void
+    private function dispatchAdmin(
+        string $formId,
+        array $forms,
+        ?string $clientIp,
+        bool $databaseExistedAtRequestStart
+    ): void
     {
-        $result = $this->factory->adminController($forms, $clientIp)->handle($formId);
+        $result = $this->factory->adminController($forms, $clientIp, $databaseExistedAtRequestStart)->handle($formId);
 
         http_response_code($result['status']);
 

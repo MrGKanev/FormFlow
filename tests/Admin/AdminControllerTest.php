@@ -65,7 +65,8 @@ final class AdminControllerTest extends TestCase
         ?MailSenderInterface $mailSender = null,
         ?SqliteWebhookDeliveryRepository $webhookDeliveries = null,
         string $uploadDirectory = '',
-        ?string $root = null
+        ?string $root = null,
+        bool $databaseExistedAtRequestStart = true
     ): AdminController {
         $whitelistRepository ??= new SqliteAdminWhitelistRepository(':memory:');
         $forms ??= [
@@ -100,7 +101,9 @@ final class AdminControllerTest extends TestCase
             $webhookDeliveries,
             null,
             $uploadDirectory,
-            $root
+            $root,
+            null,
+            $databaseExistedAtRequestStart
         );
     }
 
@@ -1225,6 +1228,18 @@ final class AdminControllerTest extends TestCase
         $this->assertStringContainsString('Slack', $delivery['body']);
         $this->assertSame(200, $auditPage['status']);
         $this->assertStringContainsString('test.action', $auditPage['body']);
+    }
+
+    public function testSystemPageWarnsWhenDatabaseWasRecreatedDuringRequest(): void
+    {
+        $controller = $this->makeController(databaseExistedAtRequestStart: false);
+        $this->login($controller);
+
+        $result = $controller->handle('admin/system');
+
+        $this->assertSame(200, $result['status']);
+        $this->assertStringContainsString('Database file was missing during this admin session', $result['body']);
+        $this->assertStringContainsString('Recreated during session', $result['body']);
     }
 
     public function testDashboardFiltersIncludeSearchDatesAndPageSize(): void

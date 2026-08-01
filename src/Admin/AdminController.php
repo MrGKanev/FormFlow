@@ -47,7 +47,8 @@ final class AdminController
         private readonly ?string $clientIp = null,
         private readonly string $uploadDirectory = '',
         private readonly ?string $root = null,
-        ?AdminSettingsService $settingsService = null
+        ?AdminSettingsService $settingsService = null,
+        private readonly bool $databaseExistedAtRequestStart = true
     ) {
         $this->settingsService = $settingsService ?? new AdminSettingsService(
             $this->configuredIps,
@@ -65,6 +66,10 @@ final class AdminController
 
         if (!isset($_SESSION['csrf_token'])) {
             $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+        }
+
+        if (!$this->databaseExistedAtRequestStart) {
+            $_SESSION['database_was_recreated'] = true;
         }
 
         $clientIp = $this->clientIp();
@@ -905,7 +910,8 @@ final class AdminController
             $this->webhookDeliveries,
             count($this->forms),
             $this->resolvedUploadDirectory(),
-            $this->root()
+            $this->root(),
+            $this->databaseWasRecreatedDuringAdminSession()
         );
 
         return $this->htmlResponse(200, $this->render('system', [
@@ -1289,6 +1295,11 @@ final class AdminController
         $ip = $_SERVER['REMOTE_ADDR'] ?? null;
 
         return is_string($ip) && $ip !== '' ? $ip : null;
+    }
+
+    private function databaseWasRecreatedDuringAdminSession(): bool
+    {
+        return !empty($_SESSION['database_was_recreated']);
     }
 
     private function ipHash(?string $ip): ?string

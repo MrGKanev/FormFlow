@@ -16,7 +16,8 @@ final class AdminSystemService
         private readonly ?WebhookDeliveryRepositoryInterface $webhookDeliveries,
         private readonly int $formCount,
         private readonly string $uploadDirectory,
-        private readonly string $root
+        private readonly string $root,
+        private readonly bool $databaseWasRecreatedDuringAdminSession = false
     ) {
     }
 
@@ -38,6 +39,7 @@ final class AdminSystemService
             'app_env' => $settings->appEnv(),
             'database_path' => $absoluteDatabasePath,
             'database_status' => is_file($absoluteDatabasePath) ? 'Present' : 'Missing',
+            'database_boot_status' => $this->databaseWasRecreatedDuringAdminSession ? 'Recreated during session' : 'Present at request start',
             'database_size' => is_file($absoluteDatabasePath) ? self::humanBytes(filesize($absoluteDatabasePath) ?: 0) : '0 B',
             'storage_writable' => is_dir($storagePath) && is_writable($storagePath) ? 'Writable' : 'Check storage',
             'uploads_writable' => is_dir($this->uploadDirectory) && is_writable($this->uploadDirectory) ? 'Writable' : 'Check uploads',
@@ -72,6 +74,10 @@ final class AdminSystemService
 
         if ($missingPackages !== []) {
             $warnings[] = 'Missing Composer packages in vendor/: ' . implode(', ', array_slice($missingPackages, 0, 8)) . (count($missingPackages) > 8 ? ', ...' : '') . '. Run composer install.';
+        }
+
+        if ($this->databaseWasRecreatedDuringAdminSession) {
+            $warnings[] = 'Database file was missing during this admin session and has been recreated empty. Restore a backup if this was not intentional.';
         }
 
         if ($this->uploadServingPolicy() === 'Missing deny rule') {

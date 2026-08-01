@@ -49,6 +49,13 @@ final class AppFactory
         return $databasePath;
     }
 
+    public function databaseFileExists(): bool
+    {
+        $databasePath = $this->databasePath();
+
+        return $databasePath === ':memory:' || is_file($databasePath);
+    }
+
     public function ipHashSecret(): string
     {
         return getenv('IP_HASH_SECRET') ?: hash('sha256', getenv('ADMIN_PASSWORD_HASH') ?: bin2hex(random_bytes(32)));
@@ -71,7 +78,7 @@ final class AppFactory
         return array_merge($configuredForms, $this->formRepository()->all());
     }
 
-    public function adminController(array $forms, ?string $clientIp): AdminController
+    public function adminController(array $forms, ?string $clientIp, bool $databaseExistedAtRequestStart = true): AdminController
     {
         $databasePath = $this->databasePath();
         $adminConfig = require $this->root . '/config/admin.php';
@@ -116,7 +123,8 @@ final class AppFactory
                 $this->root . '/.env',
                 $this->root . '/config/admin.php',
                 $this->root . '/config/security.php'
-            )
+            ),
+            $databaseExistedAtRequestStart
         );
     }
 
