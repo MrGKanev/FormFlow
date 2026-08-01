@@ -10,10 +10,6 @@
 $captchaProvider = static function (array $config): string {
     $provider = (string) ($config['captcha_provider'] ?? '');
 
-    if ($provider === '' && !empty($config['turnstile'])) {
-        $provider = 'turnstile';
-    }
-
     return in_array($provider, ['turnstile', 'hcaptcha', 'recaptcha', 'friendlycaptcha'], true)
         ? $provider
         : 'none';

@@ -30,20 +30,14 @@ final class CurlWebhookNotifierTest extends TestCase
         $this->assertSame(['generic', 'slack'], array_column($deliveries->deliveryLog(), 'channel'));
     }
 
-    public function testLegacyFormsSendToEveryConfiguredChannel(): void
+    public function testNoSelectedDeliveryChannelsSendsNothing(): void
     {
         $transport = new FakeWebhookTransport();
         $notifier = $this->notifier(new SqliteWebhookDeliveryRepository(':memory:'), $transport);
 
         $notifier->notify('contact', ['name' => 'Ada']);
 
-        $this->assertCount(4, $transport->requests);
-        $this->assertSame([
-            'https://discord.test/webhook',
-            'https://hooks.slack.test/incoming',
-            'https://hooks.example.test/formflow',
-            'https://api.telegram.org/botbot-token/sendMessage',
-        ], array_column($transport->requests, 'url'));
+        $this->assertSame([], $transport->requests);
     }
 
     public function testPerFormOverridesReplaceGlobalEndpoints(): void

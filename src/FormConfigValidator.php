@@ -9,7 +9,7 @@ use InvalidArgumentException;
 final class FormConfigValidator
 {
     private const CAPTCHA_PROVIDERS = ['none', 'turnstile', 'hcaptcha', 'recaptcha', 'friendlycaptcha'];
-    private const NOTIFICATION_CHANNELS = ['discord', 'slack', 'telegram', 'generic'];
+    private const DELIVERY_CHANNELS = ['discord', 'slack', 'telegram', 'generic'];
     private const WEBHOOK_OVERRIDE_FIELDS = [
         'discord_webhook_url',
         'slack_webhook_url',
@@ -46,10 +46,6 @@ final class FormConfigValidator
 
         $captchaProvider = (string) ($input['captcha_provider'] ?? 'none');
 
-        if (!isset($input['captcha_provider']) && isset($input['turnstile'])) {
-            $captchaProvider = 'turnstile';
-        }
-
         self::assertCaptchaProvider($captchaProvider);
 
         $config = [
@@ -57,14 +53,13 @@ final class FormConfigValidator
             'allowed_origins' => $allowedOrigins,
             'subject' => self::defaultSubject((string) ($input['subject'] ?? '')),
             'captcha_provider' => $captchaProvider,
-            'turnstile' => $captchaProvider === 'turnstile',
             'require_api_key' => isset($input['require_api_key']),
             'rate_limit_per_ip' => [
                 'max' => max(1, (int) ($input['rate_limit_max'] ?? 5)),
                 'window_minutes' => max(1, (int) ($input['rate_limit_window'] ?? 10)),
             ],
             'daily_limit' => max(1, (int) ($input['daily_limit'] ?? 200)),
-            'notification_channels' => self::notificationChannels($input['notification_channels'] ?? []),
+            'delivery_channels' => self::deliveryChannels($input),
             'uploads' => self::uploadsFromAdminInput($input),
         ];
 
@@ -111,10 +106,6 @@ final class FormConfigValidator
 
         $captchaProvider = trim((string) ($config['captcha_provider'] ?? ''));
 
-        if ($captchaProvider === '' && ($config['turnstile'] ?? false) === true) {
-            $captchaProvider = 'turnstile';
-        }
-
         if ($captchaProvider === '') {
             $captchaProvider = 'none';
         }
@@ -127,14 +118,13 @@ final class FormConfigValidator
             'allowed_origins' => $allowedOrigins,
             'subject' => self::defaultSubject((string) ($config['subject'] ?? '')),
             'captcha_provider' => $captchaProvider,
-            'turnstile' => $captchaProvider === 'turnstile',
             'require_api_key' => !empty($config['require_api_key']),
             'rate_limit_per_ip' => [
                 'max' => max(1, (int) ($rateLimit['max'] ?? 5)),
                 'window_minutes' => max(1, (int) ($rateLimit['window_minutes'] ?? 10)),
             ],
             'daily_limit' => max(1, (int) ($config['daily_limit'] ?? 200)),
-            'notification_channels' => self::notificationChannels($config['notification_channels'] ?? []),
+            'delivery_channels' => self::deliveryChannels($config),
             'uploads' => self::uploadsFromConfig($config['uploads'] ?? []),
         ];
 
@@ -195,14 +185,20 @@ final class FormConfigValidator
     }
 
     /** @return list<string> */
-    private static function notificationChannels(mixed $channels): array
+    private static function deliveryChannelList(mixed $channels): array
     {
         $channels = is_array($channels) ? $channels : [];
 
         return array_values(array_unique(array_filter(
             array_map(static fn (mixed $channel): string => (string) $channel, $channels),
-            static fn (string $channel): bool => in_array($channel, self::NOTIFICATION_CHANNELS, true)
+            static fn (string $channel): bool => in_array($channel, self::DELIVERY_CHANNELS, true)
         )));
+    }
+
+    /** @param array<string, mixed> $source @return list<string> */
+    private static function deliveryChannels(array $source): array
+    {
+        return self::deliveryChannelList($source['delivery_channels'] ?? []);
     }
 
     /** @param array<string, mixed> $input @return array<string, string> */

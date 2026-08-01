@@ -12,8 +12,8 @@ $turnstileConfigured = (string) ($integrationSettings['turnstile_secret'] ?? '')
     && (string) ($integrationSettings['turnstile_site_key'] ?? '') !== '';
 $captchaProvider = (string) ($values['captcha_provider'] ?? ($values === [] && $turnstileConfigured ? 'turnstile' : 'none'));
 $captchaSelected = static fn (string $provider): string => $captchaProvider === $provider ? ' selected' : '';
-$notificationChannels = is_array($values['notification_channels'] ?? null)
-    ? $values['notification_channels']
+$deliveryChannels = is_array($values['delivery_channels'] ?? null)
+    ? $values['delivery_channels']
     : [];
 $globalStatus = static fn (string $key): string => (string) ($integrationSettings[$key] ?? '') !== ''
     ? 'global configured'
@@ -100,12 +100,12 @@ $globalStatus = static fn (string $key): string => (string) ($integrationSetting
             <textarea name="upload_allowed_extensions" rows="3" placeholder="pdf&#10;jpg&#10;png"><?= $value('upload_allowed_extensions') ?></textarea>
         </label>
         <fieldset class="field-picker span-2">
-            <legend>Send notifications to</legend>
+            <legend>Delivery channels</legend>
             <p class="muted">Only enabled integrations are used. Configure their endpoints in Settings → Integrations.</p>
             <div class="option-grid">
                 <?php foreach (['discord' => 'Discord', 'slack' => 'Slack', 'telegram' => 'Telegram', 'generic' => 'Generic webhook'] as $channel => $label): ?>
                     <label class="checkbox-label option-check">
-                        <input type="checkbox" name="notification_channels[]" value="<?= $channel ?>"<?= in_array($channel, $notificationChannels, true) ? ' checked' : '' ?>>
+                        <input type="checkbox" name="delivery_channels[]" value="<?= $channel ?>"<?= in_array($channel, $deliveryChannels, true) ? ' checked' : '' ?>>
                         <span><?= $label ?></span>
                     </label>
                 <?php endforeach; ?>

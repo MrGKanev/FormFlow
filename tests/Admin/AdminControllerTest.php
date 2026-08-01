@@ -64,7 +64,8 @@ final class AdminControllerTest extends TestCase
         ?AuditLogRepositoryInterface $auditLog = null,
         ?MailSenderInterface $mailSender = null,
         ?SqliteWebhookDeliveryRepository $webhookDeliveries = null,
-        string $uploadDirectory = ''
+        string $uploadDirectory = '',
+        ?string $root = null
     ): AdminController {
         $whitelistRepository ??= new SqliteAdminWhitelistRepository(':memory:');
         $forms ??= [
@@ -98,7 +99,8 @@ final class AdminControllerTest extends TestCase
             $mailSender,
             $webhookDeliveries,
             null,
-            $uploadDirectory
+            $uploadDirectory,
+            $root
         );
     }
 
@@ -588,12 +590,12 @@ final class AdminControllerTest extends TestCase
             'rate_limit_max' => '3',
             'rate_limit_window' => '15',
             'daily_limit' => '50',
-            'turnstile' => '1',
+            'captcha_provider' => 'turnstile',
             'blocked_patterns' => "viagra\n<a href=",
             'upload_max_file_size_mb' => '6',
             'upload_max_files' => '2',
             'upload_allowed_extensions' => "pdf\nJPG",
-            'notification_channels' => ['slack', 'generic'],
+            'delivery_channels' => ['slack', 'generic'],
             'slack_webhook_url' => 'https://hooks.slack.com/services/form-specific',
             'csrf_token' => $token,
         ];
@@ -610,20 +612,21 @@ final class AdminControllerTest extends TestCase
         $this->assertArrayNotHasKey('required_fields', $forms['newsletter']);
         $this->assertSame(['max' => 3, 'window_minutes' => 15], $forms['newsletter']['rate_limit_per_ip']);
         $this->assertSame('turnstile', $forms['newsletter']['captcha_provider']);
-        $this->assertTrue($forms['newsletter']['turnstile']);
+        $this->assertArrayNotHasKey('turnstile', $forms['newsletter']);
         $this->assertSame([
             'max_file_size_mb' => 6,
             'max_files' => 2,
             'allowed_extensions' => ['pdf', 'jpg'],
         ], $forms['newsletter']['uploads']);
-        $this->assertSame(['slack', 'generic'], $forms['newsletter']['notification_channels']);
+        $this->assertSame(['slack', 'generic'], $forms['newsletter']['delivery_channels']);
+        $this->assertArrayNotHasKey('notification_channels', $forms['newsletter']);
         $this->assertSame([
             'slack_webhook_url' => 'https://hooks.slack.com/services/form-specific',
         ], $forms['newsletter']['notification_overrides']);
         $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', (string) $apiKeys->get('newsletter'));
     }
 
-    public function testNewFormPageDoesNotPreselectNotificationChannels(): void
+    public function testNewFormPageDoesNotPreselectDeliveryChannels(): void
     {
         $controller = $this->makeController();
         $this->login($controller);
@@ -1107,7 +1110,7 @@ final class AdminControllerTest extends TestCase
             'upload_max_file_size_mb' => '12',
             'upload_max_files' => '4',
             'upload_allowed_extensions' => "pdf\nPNG",
-            'notification_channels' => ['discord', 'telegram'],
+            'delivery_channels' => ['discord', 'telegram'],
             'csrf_token' => $token,
         ];
 
@@ -1122,7 +1125,8 @@ final class AdminControllerTest extends TestCase
             'max_files' => 4,
             'allowed_extensions' => ['pdf', 'png'],
         ], $forms['newsletter']['uploads']);
-        $this->assertSame(['discord', 'telegram'], $forms['newsletter']['notification_channels']);
+        $this->assertSame(['discord', 'telegram'], $forms['newsletter']['delivery_channels']);
+        $this->assertArrayNotHasKey('notification_channels', $forms['newsletter']);
     }
 
     public function testSubmissionActionsReviewDeleteAndExport(): void

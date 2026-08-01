@@ -156,13 +156,10 @@ final class FormHandler
         }
 
         try {
-            $channels = array_key_exists('notification_channels', $rawConfig)
-                ? (array) $config['notification_channels']
-                : null;
             $overrides = is_array($config['notification_overrides'] ?? null)
                 ? $config['notification_overrides']
                 : [];
-            $this->webhookNotifier?->notify($formId, $fields, $channels, $overrides);
+            $this->webhookNotifier?->notify($formId, $fields, (array) $config['delivery_channels'], $overrides);
         } catch (Throwable) {
         }
 
@@ -229,10 +226,6 @@ final class FormHandler
     private function captchaProvider(array $config): string
     {
         $provider = (string) ($config['captcha_provider'] ?? '');
-
-        if ($provider === '' && ($config['turnstile'] ?? false) === true) {
-            $provider = 'turnstile';
-        }
 
         return in_array($provider, ['turnstile', 'hcaptcha', 'recaptcha', 'friendlycaptcha'], true)
             ? $provider

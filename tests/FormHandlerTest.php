@@ -50,7 +50,7 @@ final class FormHandlerTest extends TestCase
             'allowed_origins' => ['https://example.com'],
             'subject' => 'New contact form submission',
             'success_redirect' => 'https://example.com/thank-you',
-            'turnstile' => true,
+            'captcha_provider' => 'turnstile',
         ], $overrides);
     }
 
@@ -133,7 +133,7 @@ final class FormHandlerTest extends TestCase
         $mailSender = new FakeMailSender();
         $repository = new SqliteSubmissionRepository(':memory:');
         $handler = $this->makeHandler(
-            ['contact' => $this->contactForm(['turnstile' => false, 'uploads' => ['allowed_extensions' => ['pdf']]])],
+            ['contact' => $this->contactForm(['captcha_provider' => 'none', 'uploads' => ['allowed_extensions' => ['pdf']]])],
             $mailSender,
             null,
             $repository,
@@ -183,7 +183,7 @@ final class FormHandlerTest extends TestCase
             ],
         ];
         $handler = $this->makeHandler(
-            ['contact' => $this->contactForm(['turnstile' => false])],
+            ['contact' => $this->contactForm(['captcha_provider' => 'none'])],
             uploadDirectory: $directory
         );
 
@@ -214,7 +214,7 @@ final class FormHandlerTest extends TestCase
             ],
         ];
         $handler = $this->makeHandler(
-            ['contact' => $this->contactForm(['turnstile' => false, 'uploads' => ['allowed_extensions' => ['pdf']]])],
+            ['contact' => $this->contactForm(['captcha_provider' => 'none', 'uploads' => ['allowed_extensions' => ['pdf']]])],
             uploadDirectory: $directory
         );
 
@@ -301,12 +301,12 @@ final class FormHandlerTest extends TestCase
         }
     }
 
-    public function testPassesSelectedNotificationChannelsToWebhookNotifier(): void
+    public function testPassesSelectedDeliveryChannelsToWebhookNotifier(): void
     {
         $_POST = ['email' => 'ada@example.com'];
         $notifier = new FakeWebhookNotifier();
         $handler = $this->makeHandler(
-            ['contact' => $this->contactForm(['turnstile' => false, 'notification_channels' => ['slack']])],
+            ['contact' => $this->contactForm(['captcha_provider' => 'none', 'delivery_channels' => ['slack']])],
             webhookNotifier: $notifier
         );
 
@@ -315,14 +315,14 @@ final class FormHandlerTest extends TestCase
         $this->assertSame(['slack'], $notifier->notifications[0]['channels']);
     }
 
-    public function testPassesPerFormNotificationOverridesToWebhookNotifier(): void
+    public function testPassesPerFormDeliveryOverridesToWebhookNotifier(): void
     {
         $_POST = ['email' => 'ada@example.com'];
         $notifier = new FakeWebhookNotifier();
         $handler = $this->makeHandler(
             ['contact' => $this->contactForm([
-                'turnstile' => false,
-                'notification_channels' => ['slack'],
+                'captcha_provider' => 'none',
+                'delivery_channels' => ['slack'],
                 'notification_overrides' => [
                     'slack_webhook_url' => 'https://hooks.slack.test/form-specific',
                 ],
@@ -337,18 +337,18 @@ final class FormHandlerTest extends TestCase
         ], $notifier->notifications[0]['overrides']);
     }
 
-    public function testPassesNullChannelsForLegacyFormConfigurations(): void
+    public function testPassesNullChannelsWhenNoDeliveryChannelsAreConfigured(): void
     {
         $_POST = ['email' => 'ada@example.com'];
         $notifier = new FakeWebhookNotifier();
         $handler = $this->makeHandler(
-            ['contact' => $this->contactForm(['turnstile' => false])],
+            ['contact' => $this->contactForm(['captcha_provider' => 'none'])],
             webhookNotifier: $notifier
         );
 
         $handler->handle('contact');
 
-        $this->assertNull($notifier->notifications[0]['channels']);
+        $this->assertSame([], $notifier->notifications[0]['channels']);
     }
 
     public function testUnknownFormReturns404(): void
@@ -458,7 +458,7 @@ final class FormHandlerTest extends TestCase
         $mailSender = new FakeMailSender();
         $captchaVerifier = new FakeCaptchaVerifier(true);
         $handler = $this->makeHandler(
-            ['contact' => $this->contactForm(['captcha_provider' => 'hcaptcha', 'turnstile' => false])],
+            ['contact' => $this->contactForm(['captcha_provider' => 'hcaptcha'])],
             $mailSender,
             captchaVerifier: $captchaVerifier
         );
@@ -484,7 +484,7 @@ final class FormHandlerTest extends TestCase
         ];
 
         $handler = $this->makeHandler(
-            ['contact' => $this->contactForm(['captcha_provider' => 'recaptcha', 'turnstile' => false])],
+            ['contact' => $this->contactForm(['captcha_provider' => 'recaptcha'])],
             captchaVerifier: new FakeCaptchaVerifier(false)
         );
 

@@ -68,6 +68,11 @@ final class AdminSettingsService
         ], $this->adminRateLimitSettings());
     }
 
+    public function snapshot(): SettingsSnapshot
+    {
+        return new SettingsSnapshot($this->currentSettings());
+    }
+
     /** @param array<string, mixed> $input @return array<string, mixed> */
     public function settingsFromInput(array $input): array
     {

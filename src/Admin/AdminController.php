@@ -10,11 +10,9 @@ use formflow\AdminUserRepositoryInterface;
 use formflow\AdminWhitelistRepositoryInterface;
 use formflow\AuditLogRepositoryInterface;
 use formflow\FormApiKeyRepositoryInterface;
-use formflow\FormConfigValidator;
 use formflow\FormConfigRepositoryInterface;
 use formflow\MailSenderInterface;
 use formflow\SubmissionRepositoryInterface;
-use formflow\SubmissionPayloadFormatter;
 use formflow\Totp;
 use formflow\WebhookDeliveryRepositoryInterface;
 use InvalidArgumentException;
@@ -46,6 +44,7 @@ final class AdminController
         private readonly ?WebhookDeliveryRepositoryInterface $webhookDeliveries = null,
         private readonly ?string $clientIp = null,
         private readonly string $uploadDirectory = '',
+        private readonly ?string $root = null,
         ?AdminSettingsService $settingsService = null
     ) {
         $this->settingsService = $settingsService ?? new AdminSettingsService(
@@ -338,9 +337,11 @@ final class AdminController
         }
 
         if ($action === 'resend') {
-            $error = $this->resendSubmission($submission);
+            $error = $this->submissionService()->resend($submission);
 
             if ($error !== null) {
+                $this->recordAudit('submission.resend_failed', 'Resend failed for submission #' . (int) $submission['id'] . '.');
+
                 return $this->htmlResponse(422, $this->render(
                     'submission',
                     ['submission' => $this->submissions->find($id) ?? $submission, 'error' => $error],
@@ -348,48 +349,12 @@ final class AdminController
                 ));
             }
 
+            $this->recordAudit('submission.resend', 'Resent submission #' . (int) $submission['id'] . '.');
+
             return ['status' => 302, 'body' => '', 'redirect' => '/admin/submissions/' . $id];
         }
 
         return $this->htmlResponse(422, '<h1>Unknown submission action.</h1>');
-    }
-
-    private function resendSubmission(array $submission): ?string
-    {
-        if ($this->mailSender === null) {
-            return 'Mail service is not available.';
-        }
-
-        $formId = (string) $submission['form_id'];
-        $config = $this->forms[$formId] ?? null;
-
-        if (!is_array($config)) {
-            return 'Form configuration was not found.';
-        }
-
-        $payload = json_decode((string) $submission['payload'], true);
-
-        if (!is_array($payload)) {
-            return 'Submission payload is invalid.';
-        }
-
-        try {
-            $this->mailSender->send(
-                (string) ($config['recipient'] ?? ''),
-                (string) ($config['subject'] ?? 'New form submission'),
-                SubmissionPayloadFormatter::displayFields($payload)
-            );
-
-            $this->submissions->markSent((int) $submission['id']);
-            $this->recordAudit('submission.resend', 'Resent submission #' . (int) $submission['id'] . '.');
-
-            return null;
-        } catch (Throwable $exception) {
-            $this->submissions->markFailed((int) $submission['id'], $exception->getMessage());
-            $this->recordAudit('submission.resend_failed', 'Resend failed for submission #' . (int) $submission['id'] . '.');
-
-            return 'Unable to resend email: ' . $exception->getMessage();
-        }
     }
 
     private function handleExport(): array
@@ -411,7 +376,7 @@ final class AdminController
             return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
         }
 
-        $ids = $this->selectedSubmissionIds($_POST['submission_ids'] ?? []);
+        $ids = $this->submissionService()->selectedIds($_POST['submission_ids'] ?? []);
         $action = (string) ($_POST['bulk_action'] ?? '');
 
         if ($ids === []) {
@@ -441,7 +406,7 @@ final class AdminController
             }
 
             if ($action === 'resend' && (string) $submission['status'] === 'failed') {
-                $this->resendSubmission($submission);
+                $this->submissionService()->resend($submission);
             }
         }
 
@@ -497,17 +462,6 @@ final class AdminController
                 'Content-Disposition' => 'attachment; filename="' . $filename . '"',
             ],
         ];
-    }
-
-    /** @param mixed $value @return list<int> */
-    private function selectedSubmissionIds(mixed $value): array
-    {
-        $ids = is_array($value) ? $value : [$value];
-
-        return array_values(array_unique(array_filter(
-            array_map(static fn (mixed $id): int => (int) $id, $ids),
-            static fn (int $id): bool => $id > 0
-        )));
     }
 
     private function handleDelivery(): array
@@ -582,14 +536,7 @@ final class AdminController
             }
 
             try {
-                [$formId, $config] = FormConfigValidator::fromAdminInput($_POST);
-
-                if (isset($this->forms[$formId]) || $this->formRepository->exists($formId)) {
-                    throw new InvalidArgumentException('A form with this ID already exists.');
-                }
-
-                $this->formRepository->create($formId, $config);
-                $this->apiKeys->regenerate($formId);
+                $formId = $this->formService()->create($_POST);
                 $this->recordAudit('form.create', 'Created form "' . $formId . '" with an API key.');
             } catch (InvalidArgumentException $exception) {
                 return $this->htmlResponse(422, $this->renderFormCreator($exception->getMessage(), $_POST));
@@ -615,8 +562,7 @@ final class AdminController
             }
 
             try {
-                [, $config] = FormConfigValidator::fromAdminInput($_POST, $formId);
-                $this->formRepository->update($formId, $config);
+                $this->formService()->update($formId, $_POST);
                 $this->recordAudit('form.update', 'Updated form "' . $formId . '".');
             } catch (InvalidArgumentException $exception) {
                 return $this->htmlResponse(422, $this->renderFormEditor($formId, $exception->getMessage(), $_POST));
@@ -628,7 +574,7 @@ final class AdminController
         return $this->htmlResponse(200, $this->renderFormEditor(
             $formId,
             null,
-            $this->formValuesFromConfig($formId, $this->forms[$formId])
+            $this->formService()->valuesFromConfig($formId, $this->forms[$formId])
         ));
     }
 
@@ -644,7 +590,7 @@ final class AdminController
             return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
         }
 
-        $this->formRepository->delete($formId);
+        $this->formService()->delete($formId);
         $this->recordAudit('form.delete', 'Deleted dynamic form "' . $formId . '".');
 
         return ['status' => 302, 'body' => '', 'redirect' => '/admin/forms'];
@@ -671,7 +617,7 @@ final class AdminController
         return $this->render('forms', [
             'error' => $error,
             'forms' => $this->forms,
-            'dynamicFormIds' => array_keys($this->formRepository->all()),
+            'dynamicFormIds' => $this->formService()->dynamicFormIds(),
             'apiKeys' => $this->apiKeys->all(),
             'appUrl' => trim((string) ($settings['app_url'] ?? '')),
             'captchaSiteKeys' => [
@@ -704,6 +650,21 @@ final class AdminController
             'values' => $values,
             'integrationSettings' => $this->currentSettings(),
         ], 'New form');
+    }
+
+    private function formService(): AdminFormService
+    {
+        return new AdminFormService($this->forms, $this->formRepository, $this->apiKeys);
+    }
+
+    private function configTransferService(): AdminConfigTransferService
+    {
+        return new AdminConfigTransferService($this->settingsService);
+    }
+
+    private function submissionService(): AdminSubmissionService
+    {
+        return new AdminSubmissionService($this->submissions, $this->mailSender, $this->forms);
     }
 
     private function handleSettings(): array
@@ -974,9 +935,18 @@ final class AdminController
 
     private function handleSystem(): array
     {
+        $system = new AdminSystemService(
+            $this->settingsService,
+            $this->submissions,
+            $this->webhookDeliveries,
+            count($this->forms),
+            $this->resolvedUploadDirectory(),
+            $this->root()
+        );
+
         return $this->htmlResponse(200, $this->render('system', [
-            'status' => $this->systemStatus(),
-            'warnings' => $this->systemWarnings(),
+            'status' => $system->status(),
+            'warnings' => $system->warnings(),
         ], 'System status'));
     }
 
@@ -1048,7 +1018,8 @@ final class AdminController
 
         $settings = $this->currentSettings();
         $path = (string) ($settings['database_path'] ?? 'storage/submissions.sqlite');
-        $path = $this->backupDatabasePath($path);
+        $backup = new AdminBackupService($this->root());
+        $path = $backup->databasePath($path);
 
         if ($path === null) {
             return $this->htmlResponse(403, '<h1>Backup path is not allowed.</h1>');
@@ -1058,7 +1029,7 @@ final class AdminController
             return $this->htmlResponse(404, '<h1>Database not found.</h1>');
         }
 
-        if (!$this->isSqliteDatabase($path)) {
+        if (!$backup->isSqliteDatabase($path)) {
             return $this->htmlResponse(422, '<h1>Backup file is not a SQLite database.</h1>');
         }
 
@@ -1084,33 +1055,6 @@ final class AdminController
         $expiresTimestamp = strtotime($expiresAt);
 
         return $expiresTimestamp === false || $expiresTimestamp < time();
-    }
-
-    private function backupDatabasePath(string $databasePath): ?string
-    {
-        $root = dirname(__DIR__, 2);
-        $storageRoot = realpath($root . '/storage');
-
-        if ($storageRoot === false) {
-            return null;
-        }
-
-        $path = str_starts_with($databasePath, '/')
-            ? $databasePath
-            : $root . '/' . ltrim($databasePath, '/');
-        $directory = realpath(dirname($path));
-
-        if ($directory === false || !$this->pathIsWithin($directory, $storageRoot)) {
-            return null;
-        }
-
-        $realPath = realpath($path);
-
-        if ($realPath !== false && !$this->pathIsWithin($realPath, $storageRoot)) {
-            return null;
-        }
-
-        return $realPath !== false ? $realPath : $path;
     }
 
     /** @param array<string, mixed> $upload */
@@ -1146,7 +1090,12 @@ final class AdminController
     {
         return $this->uploadDirectory !== ''
             ? $this->uploadDirectory
-            : dirname(__DIR__, 2) . '/storage/uploads';
+            : $this->root() . '/storage/uploads';
+    }
+
+    private function root(): string
+    {
+        return $this->root ?? dirname(__DIR__, 2);
     }
 
     private function pathIsWithin(string $path, string $root): bool
@@ -1158,31 +1107,17 @@ final class AdminController
         return $path === $root || str_starts_with($path, $root . DIRECTORY_SEPARATOR);
     }
 
-    private function isSqliteDatabase(string $path): bool
-    {
-        $handle = fopen($path, 'rb');
-
-        if ($handle === false) {
-            return false;
-        }
-
-        $header = fread($handle, 16);
-        fclose($handle);
-
-        return $header === "SQLite format 3\0";
-    }
-
     private function handleConfigExport(): array
     {
         if (!$this->verifyCsrfToken()) {
             return $this->htmlResponse(403, '<h1>Forbidden</h1>');
         }
 
-        $data = [
-            'settings' => $this->currentSettings(),
-            'forms' => $this->forms,
-            'security' => $this->securityConfig(),
-        ];
+        $data = $this->configTransferService()->exportData(
+            $this->currentSettings(),
+            $this->forms,
+            $this->securityConfig()
+        );
         $this->recordAudit('config.export', 'Exported configuration.');
 
         return [
@@ -1213,46 +1148,25 @@ final class AdminController
             return $this->htmlResponse(422, '<h1>Invalid config JSON.</h1>');
         }
 
-        $settingsToWrite = null;
-        $securityToWrite = null;
-        $formsToWrite = [];
-
         try {
-            if (isset($data['settings']) && is_array($data['settings'])) {
-                $settingsToWrite = $this->settingsFromPost(array_merge($this->currentSettings(), $data['settings']));
-            }
-
-            if (isset($data['security']) && is_array($data['security'])) {
-                $securityToWrite = $this->settingsService->securityFromConfig(array_merge($this->securityConfig(), $data['security']));
-            }
-
-            if (isset($data['forms']) && is_array($data['forms'])) {
-                foreach ($data['forms'] as $formId => $config) {
-                    if (is_string($formId) && is_array($config)) {
-                        $formsToWrite[$formId] = FormConfigValidator::normalize($formId, $config);
-                        continue;
-                    }
-
-                    throw new InvalidArgumentException('Imported forms must be keyed by valid form IDs.');
-                }
-            }
+            $prepared = $this->configTransferService()->prepareImport($data, $this->currentSettings(), $this->securityConfig());
         } catch (InvalidArgumentException $exception) {
             return $this->htmlResponse(422, '<h1>' . htmlspecialchars($exception->getMessage(), ENT_QUOTES, 'UTF-8') . '</h1>');
         }
 
-        if ($settingsToWrite !== null) {
-            $this->writeSettings($settingsToWrite);
+        if ($prepared['settings'] !== null) {
+            $this->writeSettings($prepared['settings']);
         }
 
-        if ($securityToWrite !== null) {
+        if ($prepared['security'] !== null) {
             $this->writeSecurityConfig(
-                $securityToWrite['blocked_ips'],
-                $securityToWrite['trusted_proxies'],
-                $securityToWrite['trusted_ip_headers']
+                $prepared['security']['blocked_ips'],
+                $prepared['security']['trusted_proxies'],
+                $prepared['security']['trusted_ip_headers']
             );
         }
 
-        foreach ($formsToWrite as $formId => $config) {
+        foreach ($prepared['forms'] as $formId => $config) {
             $this->formRepository->update($formId, $config);
         }
 
@@ -1263,19 +1177,19 @@ final class AdminController
 
     private function setupStatus(): array
     {
-        $settings = $this->currentSettings();
-        $databasePath = (string) ($settings['database_path'] ?? 'storage/submissions.sqlite');
-        $databaseDirectory = dirname(str_starts_with($databasePath, '/') ? $databasePath : dirname(__DIR__, 2) . '/' . $databasePath);
-        $mailReady = (string) ($settings['mail_from'] ?? '') !== ''
-            && ((string) ($settings['mailer_dsn'] ?? '') !== '' || (string) ($settings['smtp_host'] ?? '') !== '');
+        $settings = $this->settingsService->snapshot();
+        $databasePath = $settings->databasePath();
+        $databaseDirectory = dirname(str_starts_with($databasePath, '/') ? $databasePath : $this->root() . '/' . $databasePath);
+        $mailReady = $settings->string('mail_from') !== ''
+            && ($settings->string('mailer_dsn') !== '' || $settings->string('smtp_host') !== '');
         $captchaReady = (
-            (string) ($settings['turnstile_secret'] ?? '') !== '' && (string) ($settings['turnstile_site_key'] ?? '') !== ''
+            $settings->string('turnstile_secret') !== '' && $settings->string('turnstile_site_key') !== ''
         ) || (
-            (string) ($settings['hcaptcha_secret'] ?? '') !== '' && (string) ($settings['hcaptcha_site_key'] ?? '') !== ''
+            $settings->string('hcaptcha_secret') !== '' && $settings->string('hcaptcha_site_key') !== ''
         ) || (
-            (string) ($settings['recaptcha_secret'] ?? '') !== '' && (string) ($settings['recaptcha_site_key'] ?? '') !== ''
+            $settings->string('recaptcha_secret') !== '' && $settings->string('recaptcha_site_key') !== ''
         ) || (
-            (string) ($settings['friendly_captcha_api_key'] ?? '') !== '' && (string) ($settings['friendly_captcha_site_key'] ?? '') !== ''
+            $settings->string('friendly_captcha_api_key') !== '' && $settings->string('friendly_captcha_site_key') !== ''
         );
 
         return [
@@ -1284,213 +1198,6 @@ final class AdminController
             'storage' => is_dir($databaseDirectory) && is_writable($databaseDirectory) ? 'Writable' : 'Check storage',
             'forms' => (string) count($this->forms),
         ];
-    }
-
-    /** @return array<string, string|int> */
-    private function systemStatus(): array
-    {
-        $settings = $this->currentSettings();
-        $databasePath = (string) ($settings['database_path'] ?? 'storage/submissions.sqlite');
-        $absoluteDatabasePath = str_starts_with($databasePath, '/')
-            ? $databasePath
-            : dirname(__DIR__, 2) . '/' . ltrim($databasePath, '/');
-        $storagePath = dirname($absoluteDatabasePath);
-        $uploadPath = $this->resolvedUploadDirectory();
-        $failedMail = $this->submissions->count(null, 'failed');
-        $pendingMail = $this->submissions->count(null, 'pending_mail');
-        $pendingWebhooks = $this->webhookDeliveries?->countByStatus('pending') ?? 0;
-
-        return [
-            'php_version' => PHP_VERSION,
-            'app_env' => (string) ($settings['app_env'] ?? 'production'),
-            'database_path' => $absoluteDatabasePath,
-            'database_status' => is_file($absoluteDatabasePath) ? 'Present' : 'Missing',
-            'database_size' => is_file($absoluteDatabasePath) ? $this->humanBytes(filesize($absoluteDatabasePath) ?: 0) : '0 B',
-            'storage_writable' => is_dir($storagePath) && is_writable($storagePath) ? 'Writable' : 'Check storage',
-            'uploads_writable' => is_dir($uploadPath) && is_writable($uploadPath) ? 'Writable' : 'Check uploads',
-            'upload_serving_policy' => $this->uploadServingPolicy($uploadPath),
-            'missing_vendor_packages' => count($this->missingComposerPackages()),
-            'mail_delivery_mode' => (string) ($settings['mail_delivery_mode'] ?? 'sync'),
-            'webhook_delivery_mode' => (string) ($settings['webhook_delivery_mode'] ?? 'sync'),
-            'pending_mail' => $pendingMail,
-            'mail_queue_lag' => $this->queueLag($this->submissions->oldestCreatedAtByStatus('pending_mail')),
-            'mail_worker_last_run' => $this->workerLastRun('mail'),
-            'failed_mail' => $failedMail,
-            'pending_webhooks' => $pendingWebhooks,
-            'webhook_queue_lag' => $this->queueLag($this->webhookDeliveries?->oldestCreatedAtByStatus('pending')),
-            'webhook_worker_last_run' => $this->workerLastRun('webhooks'),
-            'forms' => count($this->forms),
-            'trusted_proxies' => count($this->lines((string) ($settings['trusted_proxies'] ?? ''))),
-        ];
-    }
-
-    /** @return list<string> */
-    private function systemWarnings(): array
-    {
-        $settings = $this->currentSettings();
-        $warnings = [];
-        $appEnv = (string) ($settings['app_env'] ?? 'production');
-
-        if ($appEnv !== 'production') {
-            $warnings[] = 'APP_ENV is "' . $appEnv . '"; use "production" for deployed instances.';
-        }
-
-        $missingPackages = $this->missingComposerPackages();
-
-        if ($missingPackages !== []) {
-            $warnings[] = 'Missing Composer packages in vendor/: ' . implode(', ', array_slice($missingPackages, 0, 8)) . (count($missingPackages) > 8 ? ', ...' : '') . '. Run composer install.';
-        }
-
-        $uploadPolicy = $this->uploadServingPolicy($this->resolvedUploadDirectory());
-
-        if ($uploadPolicy === 'Missing deny rule') {
-            $warnings[] = 'Uploads are writable and appear to be under the public web root without a local deny rule.';
-        }
-
-        if (($settings['mail_delivery_mode'] ?? 'sync') === 'queue' && $this->workerLastRun('mail') === 'Never') {
-            $warnings[] = 'Mail queue mode is enabled, but no mail worker heartbeat has been recorded.';
-        }
-
-        if (($settings['webhook_delivery_mode'] ?? 'sync') === 'queue' && $this->workerLastRun('webhooks') === 'Never') {
-            $warnings[] = 'Webhook queue mode is enabled, but no webhook worker heartbeat has been recorded.';
-        }
-
-        return $warnings;
-    }
-
-    /** @return list<string> */
-    private function missingComposerPackages(): array
-    {
-        $root = dirname(__DIR__, 2);
-        $lockPath = $root . '/composer.lock';
-
-        if (!is_file($lockPath)) {
-            return [];
-        }
-
-        $lock = json_decode((string) file_get_contents($lockPath), true);
-
-        if (!is_array($lock)) {
-            return [];
-        }
-
-        $packages = array_merge(
-            is_array($lock['packages'] ?? null) ? $lock['packages'] : [],
-            is_array($lock['packages-dev'] ?? null) ? $lock['packages-dev'] : []
-        );
-        $missing = [];
-
-        foreach ($packages as $package) {
-            $name = is_array($package) ? (string) ($package['name'] ?? '') : '';
-
-            if ($name === '' || !str_contains($name, '/')) {
-                continue;
-            }
-
-            [$vendor, $packageName] = explode('/', $name, 2);
-
-            if (!is_dir($root . '/vendor/' . $vendor . '/' . $packageName)) {
-                $missing[] = $name;
-            }
-        }
-
-        sort($missing);
-
-        return $missing;
-    }
-
-    private function uploadServingPolicy(string $uploadPath): string
-    {
-        $root = dirname(__DIR__, 2);
-        $publicRoot = realpath($root . '/public');
-        $uploadRoot = realpath($uploadPath) ?: $uploadPath;
-
-        if (!is_dir($uploadPath)) {
-            return 'Check uploads';
-        }
-
-        if ($publicRoot === false || !$this->pathIsWithin($uploadRoot, $publicRoot)) {
-            return 'Outside public root';
-        }
-
-        return $this->uploadDenyRulePresent($uploadPath) ? 'Deny rule present' : 'Missing deny rule';
-    }
-
-    private function uploadDenyRulePresent(string $uploadPath): bool
-    {
-        $htaccess = rtrim($uploadPath, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '.htaccess';
-
-        if (!is_file($htaccess)) {
-            return false;
-        }
-
-        $content = strtolower((string) file_get_contents($htaccess));
-
-        return str_contains($content, 'deny from all') || str_contains($content, 'require all denied');
-    }
-
-    private function queueLag(?string $oldestCreatedAt): string
-    {
-        if ($oldestCreatedAt === null || $oldestCreatedAt === '') {
-            return 'No pending work';
-        }
-
-        $timestamp = strtotime($oldestCreatedAt);
-
-        if ($timestamp === false) {
-            return 'Unknown';
-        }
-
-        return $this->humanDuration(max(0, time() - $timestamp));
-    }
-
-    private function workerLastRun(string $worker): string
-    {
-        $path = dirname(__DIR__, 2) . '/storage/runtime/' . $worker . '-last-run.txt';
-
-        if (!is_file($path)) {
-            return 'Never';
-        }
-
-        $timestamp = trim((string) file_get_contents($path));
-
-        return $timestamp !== '' ? $timestamp : 'Never';
-    }
-
-    private function humanDuration(int $seconds): string
-    {
-        if ($seconds < 60) {
-            return $seconds . 's';
-        }
-
-        if ($seconds < 3600) {
-            return (int) floor($seconds / 60) . 'm';
-        }
-
-        if ($seconds < 86400) {
-            return (int) floor($seconds / 3600) . 'h';
-        }
-
-        return (int) floor($seconds / 86400) . 'd';
-    }
-
-    private function humanBytes(int $bytes): string
-    {
-        $units = ['B', 'KB', 'MB', 'GB'];
-        $value = (float) $bytes;
-        $unit = 'B';
-
-        foreach ($units as $unit) {
-            if ($value < 1024 || $unit === 'GB') {
-                break;
-            }
-
-            $value /= 1024;
-        }
-
-        return $unit === 'B'
-            ? (string) $bytes . ' B'
-            : number_format($value, 1) . ' ' . $unit;
     }
 
     /**
@@ -1516,36 +1223,6 @@ final class AdminController
     private function recordAudit(string $action, string $detail): void
     {
         $this->auditLog?->record($this->auth->username(), $action, $detail);
-    }
-
-    /** @param array<string, mixed> $config @return array<string, mixed> */
-    private function formValuesFromConfig(string $formId, array $config): array
-    {
-        return [
-            'form_id' => $formId,
-            'recipient' => (string) ($config['recipient'] ?? ''),
-            'allowed_origins' => implode(PHP_EOL, $config['allowed_origins'] ?? []),
-            'subject' => (string) ($config['subject'] ?? ''),
-            'success_redirect' => (string) ($config['success_redirect'] ?? ''),
-            'rate_limit_max' => (string) (int) (($config['rate_limit_per_ip']['max'] ?? 5)),
-            'rate_limit_window' => (string) (int) (($config['rate_limit_per_ip']['window_minutes'] ?? 10)),
-            'daily_limit' => (string) (int) ($config['daily_limit'] ?? 200),
-            'captcha_provider' => (string) ($config['captcha_provider'] ?? (!empty($config['turnstile']) ? 'turnstile' : 'none')),
-            'turnstile' => !empty($config['turnstile']) ? '1' : '',
-            'require_api_key' => !empty($config['require_api_key']) ? '1' : '',
-            'blocked_patterns' => implode(PHP_EOL, $config['blocked_patterns'] ?? []),
-            'upload_max_file_size_mb' => (string) (int) ($config['uploads']['max_file_size_mb'] ?? 10),
-            'upload_max_files' => (string) (int) ($config['uploads']['max_files'] ?? 3),
-            'upload_allowed_extensions' => implode(PHP_EOL, $config['uploads']['allowed_extensions'] ?? []),
-            'notification_channels' => is_array($config['notification_channels'] ?? null)
-                ? $config['notification_channels']
-                : [],
-            'discord_webhook_url' => (string) ($config['notification_overrides']['discord_webhook_url'] ?? ''),
-            'slack_webhook_url' => (string) ($config['notification_overrides']['slack_webhook_url'] ?? ''),
-            'generic_webhook_url' => (string) ($config['notification_overrides']['generic_webhook_url'] ?? ''),
-            'telegram_bot_token' => (string) ($config['notification_overrides']['telegram_bot_token'] ?? ''),
-            'telegram_chat_id' => (string) ($config['notification_overrides']['telegram_chat_id'] ?? ''),
-        ];
     }
 
     /** @return list<string> */

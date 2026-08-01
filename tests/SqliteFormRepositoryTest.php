@@ -24,7 +24,7 @@ final class SqliteFormRepositoryTest extends TestCase
             'recipient' => 'news@example.com',
             'allowed_origins' => ['https://example.com'],
             'subject' => 'New signup',
-            'turnstile' => true,
+            'captcha_provider' => 'turnstile',
         ]);
 
         $forms = $repository->all();

@@ -10,22 +10,32 @@ use PHPUnit\Framework\TestCase;
 
 final class FormConfigValidatorTest extends TestCase
 {
-    public function testNormalizesLegacyTurnstileConfig(): void
+    public function testNormalizesCaptchaProviderConfig(): void
     {
         $config = FormConfigValidator::normalize('contact', [
             'recipient' => 'hello@example.com',
             'allowed_origins' => ['https://example.com'],
-            'turnstile' => true,
+            'captcha_provider' => 'turnstile',
         ]);
 
         $this->assertSame('turnstile', $config['captcha_provider']);
-        $this->assertTrue($config['turnstile']);
         $this->assertSame(['max' => 5, 'window_minutes' => 10], $config['rate_limit_per_ip']);
         $this->assertSame([
             'max_file_size_mb' => 10,
             'max_files' => 3,
             'allowed_extensions' => [],
         ], $config['uploads']);
+    }
+
+    public function testNormalizesDeliveryChannels(): void
+    {
+        $config = FormConfigValidator::normalize('contact', [
+            'recipient' => 'hello@example.com',
+            'allowed_origins' => ['https://example.com'],
+            'delivery_channels' => ['slack', 'generic'],
+        ]);
+
+        $this->assertSame(['slack', 'generic'], $config['delivery_channels']);
     }
 
     public function testRejectsInvalidImportedFormConfig(): void

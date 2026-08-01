@@ -26,7 +26,7 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
     public function notify(string $formId, array $fields, ?array $channels = null, array $overrides = []): void
     {
         $summary = $this->summary($formId, $fields);
-        $selectedChannels = $channels === null ? null : array_flip($channels);
+        $selectedChannels = array_flip($channels ?? []);
         $discordUrl = $this->overrideValue($overrides, 'discord_webhook_url') ?? $this->discordUrl;
         $slackUrl = $this->overrideValue($overrides, 'slack_webhook_url') ?? $this->slackUrl;
         $genericWebhookUrl = $this->overrideValue($overrides, 'generic_webhook_url') ?? $this->genericWebhookUrl;
@@ -77,10 +77,10 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
         return implode(PHP_EOL, $lines);
     }
 
-    /** @param array<string, true>|null $selectedChannels */
-    private function isSelected(string $channel, ?array $selectedChannels): bool
+    /** @param array<string, true> $selectedChannels */
+    private function isSelected(string $channel, array $selectedChannels): bool
     {
-        return $selectedChannels === null || isset($selectedChannels[$channel]);
+        return isset($selectedChannels[$channel]);
     }
 
     private function hasValue(?string $value): bool

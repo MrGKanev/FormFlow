@@ -110,6 +110,7 @@ final class AppFactory
             new SqliteWebhookDeliveryRepository($databasePath),
             $clientIp,
             $this->uploadDirectory(),
+            $this->root,
             new AdminSettingsService(
                 array_values(array_map('strval', $allowedIps)),
                 $this->root . '/.env',
