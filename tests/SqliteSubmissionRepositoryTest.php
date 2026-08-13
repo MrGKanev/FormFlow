@@ -178,4 +178,42 @@ final class SqliteSubmissionRepositoryTest extends TestCase
 
         $this->assertCount(0, $repository->findPaginated(null, null, 1, 10, search: 'Lovelace'));
     }
+
+    public function testMarkReviewedIsVisibleInDeliveryLog(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $id = $repository->create('contact', ['name' => 'Ada'], null);
+
+        $repository->markReviewed($id);
+
+        $this->assertNotNull($repository->find($id)['reviewed_at']);
+        $this->assertSame($id, $repository->deliveryLog()[0]['id']);
+        $this->assertNotNull($repository->deliveryLog()[0]['reviewed_at']);
+    }
+
+    public function testFindByIdsIgnoresDuplicatesAndInvalidIds(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $first = $repository->create('contact', ['name' => 'Ada'], null);
+        $second = $repository->create('support', ['name' => 'Grace'], null);
+
+        $rows = $repository->findByIds([$first, 0, -1, $second, $first, 999]);
+
+        $this->assertSame([$second, $first], array_column($rows, 'id'));
+        $this->assertSame([], $repository->findByIds([0, -1]));
+    }
+
+    public function testFindForExportAppliesSearchAndStatusFilters(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $repository->create('contact', ['email' => 'ada@example.com'], null, 'received');
+        $repository->create('contact', ['email' => 'ada@example.com'], null, 'failed');
+        $repository->create('support', ['email' => 'ada@example.com'], null, 'received');
+
+        $rows = $repository->findForExport('contact', 'received', 'ada@example.com');
+
+        $this->assertCount(1, $rows);
+        $this->assertSame('contact', $rows[0]['form_id']);
+        $this->assertSame('received', $rows[0]['status']);
+    }
 }

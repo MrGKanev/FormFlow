@@ -38,4 +38,45 @@ final class WebhookDeliveryWorkerTest extends TestCase
         $this->assertSame(1, $entry['attempts']);
         $this->assertSame('HTTP 500.', $entry['error_message']);
     }
+
+    public function testMarksWebhookAsFailedOnThirdUnsuccessfulAttempt(): void
+    {
+        $deliveries = new SqliteWebhookDeliveryRepository(':memory:');
+        $deliveries->enqueue('contact', 'slack', 'https://hooks.slack.test/incoming', ['text' => 'hello']);
+        $id = $deliveries->due()[0]['id'];
+        $deliveries->markQueuedFailed($id, 2, 'Previous error.', 0);
+        $transport = new FakeWebhookTransport(['HTTP 500.']);
+
+        $summary = (new WebhookDeliveryWorker($deliveries, $transport))->process();
+        $entry = $deliveries->deliveryLog()[0];
+
+        $this->assertSame(['attempted' => 1, 'sent' => 0, 'failed' => 1, 'pending' => 0], $summary);
+        $this->assertSame('failed', $entry['status']);
+        $this->assertSame(3, $entry['attempts']);
+        $this->assertSame('HTTP 500.', $entry['error_message']);
+    }
+
+    public function testInvalidStoredPayloadFailsWithoutCallingTransport(): void
+    {
+        $deliveries = new SqliteWebhookDeliveryRepository(':memory:');
+        $deliveries->enqueue('contact', 'slack', 'https://hooks.slack.test/incoming', ['text' => 'hello']);
+        $id = $deliveries->due()[0]['id'];
+        $pdo = $this->pdo($deliveries);
+        $pdo->prepare('UPDATE webhook_deliveries SET payload_json = :payload WHERE id = :id')
+            ->execute(['payload' => '{invalid json', 'id' => $id]);
+        $transport = new FakeWebhookTransport();
+
+        $summary = (new WebhookDeliveryWorker($deliveries, $transport))->process();
+        $entry = $deliveries->deliveryLog()[0];
+
+        $this->assertSame(['attempted' => 1, 'sent' => 0, 'failed' => 1, 'pending' => 0], $summary);
+        $this->assertSame('failed', $entry['status']);
+        $this->assertSame('Stored webhook payload is invalid.', $entry['error_message']);
+        $this->assertSame([], $transport->requests);
+    }
+
+    private function pdo(SqliteWebhookDeliveryRepository $repository): \PDO
+    {
+        return (new \ReflectionProperty($repository, 'pdo'))->getValue($repository);
+    }
 }
