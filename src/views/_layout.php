@@ -34,6 +34,7 @@ $isActive = static function (string $href) use ($currentPath): bool {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>formflow admin - <?= htmlspecialchars($title, ENT_QUOTES, 'UTF-8') ?></title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%A8%3C/text%3E%3C/svg%3E">
 <script>
 try {
     document.documentElement.dataset.theme = localStorage.getItem('formflow-theme') === 'dark' ? 'dark' : 'light';
@@ -60,7 +61,10 @@ try {
             <span class="theme-toggle-icon" aria-hidden="true"></span>
             <span data-theme-label>Dark</span>
         </button>
-        <a href="/admin/logout" class="nav-logout">Log out</a>
+        <form method="POST" action="/admin/logout" class="inline">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars((string) ($_SESSION['csrf_token'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
+            <button type="submit" class="nav-logout">Log out</button>
+        </form>
     </div>
 </nav>
 <?php else: ?>

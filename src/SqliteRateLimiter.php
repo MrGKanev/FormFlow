@@ -48,13 +48,13 @@ final class SqliteRateLimiter implements RateLimiterInterface
         $statement->execute([
             'form_id' => $formId,
             'ip_hash' => $ipHash,
-            'created_at' => gmdate('c'),
+            'created_at' => Clock::nowIso(),
         ]);
     }
 
     public function countRecentHitsByIp(string $formId, ?string $ipHash, int $windowMinutes): int
     {
-        $since = gmdate('c', time() - ($windowMinutes * 60));
+        $since = Clock::relativeIso(-($windowMinutes * 60));
 
         if ($ipHash === null) {
             $statement = $this->pdo->prepare(
@@ -84,7 +84,7 @@ final class SqliteRateLimiter implements RateLimiterInterface
 
     public function countRecentHitsForForm(string $formId, int $windowMinutes): int
     {
-        $since = gmdate('c', time() - ($windowMinutes * 60));
+        $since = Clock::relativeIso(-($windowMinutes * 60));
 
         $statement = $this->pdo->prepare(
             'SELECT COUNT(*) AS hits FROM rate_limit_hits
@@ -105,7 +105,7 @@ final class SqliteRateLimiter implements RateLimiterInterface
             return;
         }
 
-        $cutoff = gmdate('c', time() - 86400);
+        $cutoff = Clock::relativeIso(-86400);
 
         $this->pdo
             ->prepare('DELETE FROM rate_limit_hits WHERE created_at < :cutoff')

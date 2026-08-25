@@ -7,5 +7,17 @@ services:
       - .env
     volumes:
       - ./storage:/var/www/html/storage
-      - ./.env:/var/www/html/.env:ro
+      - ./.env:/var/www/html/.env
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/lock/apache2
+      - /var/run/apache2
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "php -r 'exit(str_contains((string) @file_get_contents(\"http://127.0.0.1/health?format=json\"), \"\\\"status\\\":\\\"ok\\\"\") ? 0 : 1);'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped

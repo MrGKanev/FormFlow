@@ -14,7 +14,7 @@ interface WebhookDeliveryRepositoryInterface
         ?string $errorMessage = null
     ): void;
 
-    /** @param array<string, string|array<string, string>> $payload */
+    /** @param array<string, mixed> $payload */
     public function enqueue(string $formId, string $channel, string $url, array $payload): void;
 
     /** @return list<array<string, mixed>> */
@@ -25,6 +25,8 @@ interface WebhookDeliveryRepositoryInterface
     public function markQueuedFailed(int $id, int $attempts, string $errorMessage, ?int $retryAfterSeconds = null): void;
 
     public function countByStatus(string $status): int;
+
+    public function oldestCreatedAtByStatus(string $status): ?string;
 
     /** @return list<array<string, mixed>> */
     public function deliveryLog(int $limit = 100): array;

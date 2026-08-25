@@ -49,7 +49,7 @@ final class SqliteAdminWhitelistRepository implements AdminWhitelistRepositoryIn
             $statement->execute([
                 'ip_or_cidr' => $ipOrCidr,
                 'note' => $note,
-                'created_at' => gmdate('c'),
+                'created_at' => Clock::nowIso(),
             ]);
         } catch (PDOException $exception) {
             if (str_contains($exception->getMessage(), 'UNIQUE constraint failed')) {

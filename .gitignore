@@ -4,3 +4,5 @@
 /storage/*.sqlite-shm
 /storage/*.sqlite-wal
 /.phpunit.result.cache
+/storage/phpstan
+.DS_Store

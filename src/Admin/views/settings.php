@@ -7,6 +7,8 @@
 /** @var string $csrfToken */
 /** @var string|null $totpQrSvg */
 /** @var string $totpProvisioningUri */
+/** @var string|null $recoveryToken */
+/** @var string|null $recoveryTokenExpiresAt */
 /** @var 'general'|'delivery'|'protection'|'admin'|'maintenance' $activeTab */
 $value = static fn (string $key, string $default = ''): string => htmlspecialchars(
     (string) ($settings[$key] ?? $default),
@@ -138,7 +140,7 @@ $settingsTabs = [
         <div class="form-actions settings-actions"><input type="hidden" name="action" value="save"><button type="submit">Save admin settings</button></div>
     </form>
     <div class="settings-grid">
-        <section class="panel"><div class="section-heading"><h2>Recovery</h2></div><form method="POST" action="/admin/settings" class="utility-form"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>"><input type="hidden" name="tab" value="admin"><input type="hidden" name="action" value="generate_recovery"><div class="form-actions"><button type="submit" class="secondary">Generate recovery token</button></div></form></section>
+        <section class="panel"><div class="section-heading"><h2>Recovery</h2></div><?php if (($recoveryToken ?? null) !== null): ?><label><span>Recovery token</span><input type="text" value="<?= htmlspecialchars($recoveryToken, ENT_QUOTES, 'UTF-8') ?>" readonly></label><p class="muted">Shown once. Expires at <?= htmlspecialchars((string) ($recoveryTokenExpiresAt ?? ''), ENT_QUOTES, 'UTF-8') ?>.</p><?php endif; ?><form method="POST" action="/admin/settings" class="utility-form"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>"><input type="hidden" name="tab" value="admin"><input type="hidden" name="action" value="generate_recovery"><div class="form-actions"><button type="submit" class="secondary">Generate recovery token</button></div></form></section>
         <section class="panel"><div class="section-heading"><h2>2FA</h2></div><?php if (($totpQrSvg ?? null) !== null): ?><div class="totp-setup"><div class="totp-qr-frame"><?= $totpQrSvg ?></div><div><p class="muted">Scan this QR code with an authenticator app.</p><code><?= htmlspecialchars($totpProvisioningUri, ENT_QUOTES, 'UTF-8') ?></code></div></div><?php endif; ?><form method="POST" action="/admin/settings" class="utility-form"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>"><input type="hidden" name="tab" value="admin"><input type="hidden" name="action" value="generate_totp"><div class="form-actions"><button type="submit" class="secondary">Generate TOTP secret</button></div></form></section>
     </div>
 <?php endif; ?>

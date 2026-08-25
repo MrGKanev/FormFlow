@@ -50,7 +50,7 @@ final class FormHandlerTest extends TestCase
             'allowed_origins' => ['https://example.com'],
             'subject' => 'New contact form submission',
             'success_redirect' => 'https://example.com/thank-you',
-            'turnstile' => true,
+            'captcha_provider' => 'turnstile',
         ], $overrides);
     }
 
@@ -133,7 +133,7 @@ final class FormHandlerTest extends TestCase
         $mailSender = new FakeMailSender();
         $repository = new SqliteSubmissionRepository(':memory:');
         $handler = $this->makeHandler(
-            ['contact' => $this->contactForm(['turnstile' => false, 'uploads' => ['allowed_extensions' => ['pdf']]])],
+            ['contact' => $this->contactForm(['captcha_provider' => 'none', 'uploads' => ['allowed_extensions' => ['pdf']]])],
             $mailSender,
             null,
             $repository,
@@ -151,6 +151,96 @@ final class FormHandlerTest extends TestCase
             $this->assertCount(1, glob($directory . '/*') ?: []);
             $payload = json_decode((string) $repository->find(1)['payload'], true, flags: JSON_THROW_ON_ERROR);
             $this->assertArrayHasKey('attachment', $payload);
+            $this->assertSame('upload', $payload['attachment']['type']);
+            $this->assertSame('document.PDF', $payload['attachment']['original_name']);
+            $this->assertNotSame('', $payload['attachment']['stored_name']);
+            $this->assertSame(basename((string) $payload['attachment']['stored_name']), $payload['attachment']['stored_name']);
+            $this->assertArrayNotHasKey('relative_path', $payload['attachment']);
+            $this->assertArrayNotHasKey('path', $payload['attachment']);
+        } finally {
+            foreach (glob($directory . '/*') ?: [] as $file) {
+                unlink($file);
+            }
+            if (is_dir($directory)) {
+                rmdir($directory);
+            }
+            if (is_file($source)) {
+                unlink($source);
+            }
+        }
+    }
+
+    public function testFailedCaptchaRemovesAStoredUpload(): void
+    {
+        $directory = sys_get_temp_dir() . '/formflow-upload-' . bin2hex(random_bytes(6));
+        $source = tempnam(sys_get_temp_dir(), 'formflow-source-');
+        self::assertNotFalse($source);
+        file_put_contents($source, "%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n");
+        $_POST = [
+            'email' => 'ada@example.com',
+            'cf-turnstile-response' => 'bad-token',
+        ];
+        $_FILES = [
+            'attachment' => [
+                'name' => 'document.pdf',
+                'tmp_name' => $source,
+                'error' => UPLOAD_ERR_OK,
+                'size' => filesize($source),
+            ],
+        ];
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm(['uploads' => ['allowed_extensions' => ['pdf']]])],
+            turnstile: new FakeTurnstileVerifier(false),
+            uploadDirectory: $directory
+        );
+
+        try {
+            $result = $handler->handle('contact');
+
+            $this->assertSame(422, $result['status']);
+            $this->assertSame([], glob($directory . '/*') ?: []);
+        } finally {
+            foreach (glob($directory . '/*') ?: [] as $file) {
+                unlink($file);
+            }
+            if (is_dir($directory)) {
+                rmdir($directory);
+            }
+            if (is_file($source)) {
+                unlink($source);
+            }
+        }
+    }
+
+    public function testInvalidEmailRemovesAStoredUpload(): void
+    {
+        $directory = sys_get_temp_dir() . '/formflow-upload-' . bin2hex(random_bytes(6));
+        $source = tempnam(sys_get_temp_dir(), 'formflow-source-');
+        self::assertNotFalse($source);
+        file_put_contents($source, "%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n");
+        $_POST = ['email' => 'not-an-email'];
+        $_FILES = [
+            'attachment' => [
+                'name' => 'document.pdf',
+                'tmp_name' => $source,
+                'error' => UPLOAD_ERR_OK,
+                'size' => filesize($source),
+            ],
+        ];
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm([
+                'captcha_provider' => 'none',
+                'uploads' => ['allowed_extensions' => ['pdf']],
+            ])],
+            uploadDirectory: $directory
+        );
+
+        try {
+            $handler->handle('contact');
+            $this->fail('Expected an invalid email exception.');
+        } catch (InvalidArgumentException $exception) {
+            $this->assertSame('The email field is invalid.', $exception->getMessage());
+            $this->assertSame([], glob($directory . '/*') ?: []);
         } finally {
             foreach (glob($directory . '/*') ?: [] as $file) {
                 unlink($file);
@@ -177,7 +267,7 @@ final class FormHandlerTest extends TestCase
             ],
         ];
         $handler = $this->makeHandler(
-            ['contact' => $this->contactForm(['turnstile' => false])],
+            ['contact' => $this->contactForm(['captcha_provider' => 'none'])],
             uploadDirectory: $directory
         );
 
@@ -208,7 +298,7 @@ final class FormHandlerTest extends TestCase
             ],
         ];
         $handler = $this->makeHandler(
-            ['contact' => $this->contactForm(['turnstile' => false, 'uploads' => ['allowed_extensions' => ['pdf']]])],
+            ['contact' => $this->contactForm(['captcha_provider' => 'none', 'uploads' => ['allowed_extensions' => ['pdf']]])],
             uploadDirectory: $directory
         );
 
@@ -295,12 +385,12 @@ final class FormHandlerTest extends TestCase
         }
     }
 
-    public function testPassesSelectedNotificationChannelsToWebhookNotifier(): void
+    public function testPassesSelectedDeliveryChannelsToWebhookNotifier(): void
     {
         $_POST = ['email' => 'ada@example.com'];
         $notifier = new FakeWebhookNotifier();
         $handler = $this->makeHandler(
-            ['contact' => $this->contactForm(['turnstile' => false, 'notification_channels' => ['slack']])],
+            ['contact' => $this->contactForm(['captcha_provider' => 'none', 'delivery_channels' => ['slack']])],
             webhookNotifier: $notifier
         );
 
@@ -309,14 +399,14 @@ final class FormHandlerTest extends TestCase
         $this->assertSame(['slack'], $notifier->notifications[0]['channels']);
     }
 
-    public function testPassesPerFormNotificationOverridesToWebhookNotifier(): void
+    public function testPassesPerFormDeliveryOverridesToWebhookNotifier(): void
     {
         $_POST = ['email' => 'ada@example.com'];
         $notifier = new FakeWebhookNotifier();
         $handler = $this->makeHandler(
             ['contact' => $this->contactForm([
-                'turnstile' => false,
-                'notification_channels' => ['slack'],
+                'captcha_provider' => 'none',
+                'delivery_channels' => ['slack'],
                 'notification_overrides' => [
                     'slack_webhook_url' => 'https://hooks.slack.test/form-specific',
                 ],
@@ -331,18 +421,18 @@ final class FormHandlerTest extends TestCase
         ], $notifier->notifications[0]['overrides']);
     }
 
-    public function testPassesNullChannelsForLegacyFormConfigurations(): void
+    public function testPassesNullChannelsWhenNoDeliveryChannelsAreConfigured(): void
     {
         $_POST = ['email' => 'ada@example.com'];
         $notifier = new FakeWebhookNotifier();
         $handler = $this->makeHandler(
-            ['contact' => $this->contactForm(['turnstile' => false])],
+            ['contact' => $this->contactForm(['captcha_provider' => 'none'])],
             webhookNotifier: $notifier
         );
 
         $handler->handle('contact');
 
-        $this->assertNull($notifier->notifications[0]['channels']);
+        $this->assertSame([], $notifier->notifications[0]['channels']);
     }
 
     public function testUnknownFormReturns404(): void
@@ -452,7 +542,7 @@ final class FormHandlerTest extends TestCase
         $mailSender = new FakeMailSender();
         $captchaVerifier = new FakeCaptchaVerifier(true);
         $handler = $this->makeHandler(
-            ['contact' => $this->contactForm(['captcha_provider' => 'hcaptcha', 'turnstile' => false])],
+            ['contact' => $this->contactForm(['captcha_provider' => 'hcaptcha'])],
             $mailSender,
             captchaVerifier: $captchaVerifier
         );
@@ -478,7 +568,7 @@ final class FormHandlerTest extends TestCase
         ];
 
         $handler = $this->makeHandler(
-            ['contact' => $this->contactForm(['captcha_provider' => 'recaptcha', 'turnstile' => false])],
+            ['contact' => $this->contactForm(['captcha_provider' => 'recaptcha'])],
             captchaVerifier: new FakeCaptchaVerifier(false)
         );
 

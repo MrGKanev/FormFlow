@@ -54,7 +54,7 @@ final class MailDeliveryWorker
                 $this->mailSender->send(
                     (string) $config['recipient'],
                     (string) ($config['subject'] ?? 'New form submission'),
-                    array_map('strval', $payload)
+                    SubmissionPayloadFormatter::displayFields($payload)
                 );
                 $this->submissions->markSent((int) $submission['id']);
                 $summary['sent']++;

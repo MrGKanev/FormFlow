@@ -24,6 +24,7 @@ final class MailService implements MailSenderInterface
 
     public function send(string $recipient, string $subject, array $fields): void
     {
+        $fields = SubmissionPayloadFormatter::displayFields($fields);
         $email = (new Email())
             ->from(new Address($this->fromEmail, $this->fromName))
             ->to($recipient)

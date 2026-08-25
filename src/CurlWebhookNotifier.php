@@ -26,7 +26,7 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
     public function notify(string $formId, array $fields, ?array $channels = null, array $overrides = []): void
     {
         $summary = $this->summary($formId, $fields);
-        $selectedChannels = $channels === null ? null : array_flip($channels);
+        $selectedChannels = array_flip($channels ?? []);
         $discordUrl = $this->overrideValue($overrides, 'discord_webhook_url') ?? $this->discordUrl;
         $slackUrl = $this->overrideValue($overrides, 'slack_webhook_url') ?? $this->slackUrl;
         $genericWebhookUrl = $this->overrideValue($overrides, 'generic_webhook_url') ?? $this->genericWebhookUrl;
@@ -65,22 +65,22 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
         }
     }
 
-    /** @param array<string, string> $fields */
+    /** @param array<string, mixed> $fields */
     private function summary(string $formId, array $fields): string
     {
         $lines = ['New formflow submission: ' . $formId];
 
-        foreach (array_slice($fields, 0, 8, true) as $key => $value) {
-            $lines[] = ucfirst(str_replace('_', ' ', (string) $key)) . ': ' . mb_substr((string) $value, 0, 240);
+        foreach (array_slice(SubmissionPayloadFormatter::displayFields($fields), 0, 8, true) as $key => $value) {
+            $lines[] = ucfirst(str_replace('_', ' ', (string) $key)) . ': ' . mb_substr($value, 0, 240);
         }
 
         return implode(PHP_EOL, $lines);
     }
 
-    /** @param array<string, true>|null $selectedChannels */
-    private function isSelected(string $channel, ?array $selectedChannels): bool
+    /** @param array<string, true> $selectedChannels */
+    private function isSelected(string $channel, array $selectedChannels): bool
     {
-        return $selectedChannels === null || isset($selectedChannels[$channel]);
+        return isset($selectedChannels[$channel]);
     }
 
     private function hasValue(?string $value): bool
@@ -96,7 +96,7 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
         return $value !== '' ? $value : null;
     }
 
-    /** @param array<string, string|array<string, string>> $payload */
+    /** @param array<string, mixed> $payload */
     private function deliver(string $formId, string $channel, string $url, array $payload): void
     {
         if ($this->defer) {

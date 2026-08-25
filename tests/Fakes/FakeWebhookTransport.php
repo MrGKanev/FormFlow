@@ -8,7 +8,7 @@ use formflow\WebhookTransportInterface;
 
 final class FakeWebhookTransport implements WebhookTransportInterface
 {
-    /** @var list<array{url: string, payload: array<string, string|array<string, string>}> */
+    /** @var list<array{url: string, payload: array<string, mixed>}> */
     public array $requests = [];
 
     /** @param list<string|null> $responses */

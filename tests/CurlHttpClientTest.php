@@ -138,14 +138,19 @@ final class CurlHttpClientTest extends TestCase
         CurlSpy::$response = '';
         CurlSpy::$statusCode = 204;
 
-        $error = (new CurlWebhookTransport())->postJson(
+        $error = (new CurlWebhookTransport(
+            static fn (string $host): array => ['93.184.216.34']
+        ))->postJson(
             'https://hooks.example.test/incoming',
             ['form_id' => 'contact', 'fields' => ['name' => 'Ada']]
         );
 
         $this->assertNull($error);
         $this->assertSame('https://hooks.example.test/incoming', CurlSpy::$url);
-        $this->assertSame(['Content-Type: application/json'], CurlSpy::$options[CURLOPT_HTTPHEADER]);
+        $this->assertSame(
+            ['Content-Type: application/json', 'Accept: application/json, text/plain, */*'],
+            CurlSpy::$options[CURLOPT_HTTPHEADER]
+        );
         $this->assertSame(
             ['form_id' => 'contact', 'fields' => ['name' => 'Ada']],
             json_decode((string) CurlSpy::$options[CURLOPT_POSTFIELDS], true, 512, JSON_THROW_ON_ERROR)
@@ -157,7 +162,9 @@ final class CurlHttpClientTest extends TestCase
         CurlSpy::$response = false;
         CurlSpy::$error = 'Connection refused';
 
-        $transport = new CurlWebhookTransport();
+        $transport = new CurlWebhookTransport(
+            static fn (string $host): array => ['93.184.216.34']
+        );
         $this->assertSame('Connection refused', $transport->postJson('https://hooks.example.test/incoming', []));
 
         CurlSpy::$response = 'temporarily unavailable';

@@ -7,7 +7,7 @@ namespace formflow;
 interface WebhookTransportInterface
 {
     /**
-     * @param array<string, string|array<string, string>> $payload
+     * @param array<string, mixed> $payload
      * @return string|null Null when the receiver accepted the request.
      */
     public function postJson(string $url, array $payload): ?string;

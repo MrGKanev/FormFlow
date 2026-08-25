@@ -42,7 +42,7 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
              VALUES (:form_id, :channel, :status, :attempts, :error_message, :created_at, :sent_at)'
         );
 
-        $createdAt = gmdate('c');
+        $createdAt = Clock::nowIso();
         $statement->execute([
             'form_id' => $formId,
             'channel' => $channel,
@@ -56,7 +56,7 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
 
     public function enqueue(string $formId, string $channel, string $url, array $payload): void
     {
-        $createdAt = gmdate('c');
+        $createdAt = Clock::nowIso();
         $statement = $this->pdo->prepare(
             'INSERT INTO webhook_deliveries
                 (form_id, channel, status, attempts, error_message, created_at, sent_at, url, payload_json, next_attempt_at)
@@ -88,7 +88,7 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
              LIMIT :limit'
         );
         $statement->bindValue(':status', 'pending', PDO::PARAM_STR);
-        $statement->bindValue(':now', gmdate('c'), PDO::PARAM_STR);
+        $statement->bindValue(':now', Clock::nowIso(), PDO::PARAM_STR);
         $statement->bindValue(':limit', max(1, $limit), PDO::PARAM_INT);
         $statement->execute();
 
@@ -105,7 +105,7 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
         $statement->execute([
             'status' => 'sent',
             'attempts' => max(1, $attempts),
-            'sent_at' => gmdate('c'),
+            'sent_at' => Clock::nowIso(),
             'id' => $id,
         ]);
     }
@@ -122,7 +122,7 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
             'status' => $status,
             'attempts' => max(1, $attempts),
             'error_message' => mb_substr($errorMessage, 0, 1000),
-            'next_attempt_at' => $retryAfterSeconds === null ? null : gmdate('c', time() + $retryAfterSeconds),
+            'next_attempt_at' => $retryAfterSeconds === null ? null : Clock::relativeIso((int) $retryAfterSeconds),
             'id' => $id,
         ]);
     }
@@ -147,6 +147,20 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
         $statement->execute(['status' => $status]);
 
         return (int) $statement->fetch()['total'];
+    }
+
+    public function oldestCreatedAtByStatus(string $status): ?string
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT created_at FROM webhook_deliveries
+             WHERE status = :status
+             ORDER BY created_at ASC, id ASC
+             LIMIT 1'
+        );
+        $statement->execute(['status' => $status]);
+        $row = $statement->fetch();
+
+        return $row === false ? null : (string) $row['created_at'];
     }
 
     private function createSchema(): void
