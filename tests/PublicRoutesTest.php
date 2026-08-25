@@ -34,7 +34,7 @@ final class PublicRoutesTest extends TestCase
 
     public function testPublicHomeDoesNotExposeAdminLinkToRemoteVisitors(): void
     {
-        [$exitCode, $output, $error] = $this->request('/', ['REMOTE_ADDR' => '203.0.113.7']);
+        [$exitCode, $output, $error] = $this->installedRequest('/', ['REMOTE_ADDR' => '203.0.113.7']);
 
         $this->assertSame(0, $exitCode, $error);
         $this->assertStringContainsString('Self-hosted form backend', $output);
@@ -46,7 +46,12 @@ final class PublicRoutesTest extends TestCase
      * @param array<string, string> $query
      * @return array{0: int, 1: string, 2: string}
      */
-    private function request(string $path, array $serverOverrides = [], array $query = []): array
+    private function request(
+        string $path,
+        array $serverOverrides = [],
+        array $query = [],
+        ?string $routerRoot = null
+    ): array
     {
         $server = array_merge([
             'REQUEST_URI' => $path,
@@ -59,16 +64,29 @@ $_GET = json_decode($argv[2], true, 512, JSON_THROW_ON_ERROR);
 $_POST = [];
 $_FILES = [];
 require $argv[3];
+
+if (isset($argv[4])) {
+    $root = $argv[4];
+    (new \formflow\AppRouter(new \formflow\AppFactory($root), [], $root))->dispatch();
+}
 PHP;
+        $command = [
+            PHP_BINARY,
+            '-r',
+            $script,
+            json_encode($server, JSON_THROW_ON_ERROR),
+            json_encode($query, JSON_THROW_ON_ERROR),
+            $routerRoot === null
+                ? dirname(__DIR__) . '/public/index.php'
+                : dirname(__DIR__) . '/vendor/autoload.php',
+        ];
+
+        if ($routerRoot !== null) {
+            $command[] = $routerRoot;
+        }
+
         $process = proc_open(
-            [
-                PHP_BINARY,
-                '-r',
-                $script,
-                json_encode($server, JSON_THROW_ON_ERROR),
-                json_encode($query, JSON_THROW_ON_ERROR),
-                dirname(__DIR__) . '/public/index.php',
-            ],
+            $command,
             [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes
         );
@@ -80,5 +98,24 @@ PHP;
         fclose($pipes[2]);
 
         return [proc_close($process), $output, $error];
+    }
+
+    /**
+     * @param array<string, string> $serverOverrides
+     * @param array<string, string> $query
+     * @return array{0: int, 1: string, 2: string}
+     */
+    private function installedRequest(string $path, array $serverOverrides = [], array $query = []): array
+    {
+        $root = sys_get_temp_dir() . '/formflow-public-routes-' . bin2hex(random_bytes(6));
+        mkdir($root);
+        file_put_contents($root . '/.env', "APP_ENV='test'\n");
+
+        try {
+            return $this->request($path, $serverOverrides, $query, $root);
+        } finally {
+            unlink($root . '/.env');
+            rmdir($root);
+        }
     }
 }
