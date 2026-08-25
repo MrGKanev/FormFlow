@@ -45,4 +45,20 @@ final class SqliteWebhookDeliveryRepositoryTest extends TestCase
         $this->assertSame('https://example.test/hook', $due[0]['url']);
         $this->assertJson((string) $due[0]['payload_json']);
     }
+
+    public function testTemporaryFailureDefersDeliveryUntilItsRetryTime(): void
+    {
+        $repository = new SqliteWebhookDeliveryRepository(':memory:');
+        $repository->enqueue('contact', 'generic', 'https://example.test/hook', ['form_id' => 'contact']);
+        $id = $repository->due()[0]['id'];
+
+        $repository->markQueuedFailed($id, 1, 'Temporary failure.', 60);
+
+        $this->assertSame([], $repository->due());
+        $entry = $repository->deliveryLog()[0];
+        $this->assertSame('pending', $entry['status']);
+        $this->assertSame(1, $entry['attempts']);
+        $this->assertSame('Temporary failure.', $entry['error_message']);
+        $this->assertSame(1, $repository->countByStatus('pending'));
+    }
 }

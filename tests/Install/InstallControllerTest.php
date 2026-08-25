@@ -205,6 +205,42 @@ final class InstallControllerTest extends TestCase
         $this->assertFileDoesNotExist($this->envPath);
     }
 
+    public function testPostWithInvalidSmtpPortReturns422(): void
+    {
+        $controller = $this->makeController();
+        $controller->handle();
+        $token = $this->csrfToken();
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = $this->validPayload();
+        $_POST['smtp_port'] = '65536';
+        $_POST['csrf_token'] = $token;
+
+        $result = $controller->handle();
+
+        $this->assertSame(422, $result['status']);
+        $this->assertStringContainsString('SMTP port must be between 1 and 65535.', $result['body']);
+        $this->assertFileDoesNotExist($this->envPath);
+    }
+
+    public function testPostWithInvalidSmtpEncryptionReturns422(): void
+    {
+        $controller = $this->makeController();
+        $controller->handle();
+        $token = $this->csrfToken();
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = $this->validPayload();
+        $_POST['smtp_encryption'] = 'starttls';
+        $_POST['csrf_token'] = $token;
+
+        $result = $controller->handle();
+
+        $this->assertSame(422, $result['status']);
+        $this->assertStringContainsString('SMTP encryption must be TLS, SSL, or None.', $result['body']);
+        $this->assertFileDoesNotExist($this->envPath);
+    }
+
     public function testPostWithSingleQuoteInFieldReturns422(): void
     {
         $controller = $this->makeController();

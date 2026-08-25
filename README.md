@@ -13,9 +13,9 @@ Minimal self-hosted PHP backend for accepting HTML forms (like Web3Forms/Formspr
 
 ## Requirements
 
-- PHP 8.2+
+- PHP 8.4.1+ (including PHP 8.5)
 - Composer
-- PHP extensions: `curl`, `mbstring`, `pdo_sqlite`
+- PHP extensions: `curl`, `fileinfo`, `json`, `mbstring`, `pdo`, `pdo_sqlite`
 
 ## Installation
 

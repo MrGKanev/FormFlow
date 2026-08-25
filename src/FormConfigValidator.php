@@ -106,6 +106,10 @@ final class FormConfigValidator
 
         $captchaProvider = trim((string) ($config['captcha_provider'] ?? ''));
 
+        if ($captchaProvider === '' && ($config['turnstile'] ?? false) === true) {
+            $captchaProvider = 'turnstile';
+        }
+
         if ($captchaProvider === '') {
             $captchaProvider = 'none';
         }
@@ -198,7 +202,11 @@ final class FormConfigValidator
     /** @param array<string, mixed> $source @return list<string> */
     private static function deliveryChannels(array $source): array
     {
-        return self::deliveryChannelList($source['delivery_channels'] ?? []);
+        $channels = array_key_exists('delivery_channels', $source)
+            ? $source['delivery_channels']
+            : ($source['notification_channels'] ?? []);
+
+        return self::deliveryChannelList($channels);
     }
 
     /** @param array<string, mixed> $input @return array<string, string> */

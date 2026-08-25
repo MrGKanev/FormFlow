@@ -48,4 +48,36 @@ final class ClientIpResolverTest extends TestCase
             'HTTP_X_REAL_IP' => 'not-an-ip',
         ]));
     }
+
+    public function testMissingOrInvalidRemoteAddressReturnsNull(): void
+    {
+        $resolver = new ClientIpResolver(['127.0.0.1']);
+
+        $this->assertNull($resolver->resolve([]));
+        $this->assertNull($resolver->resolve(['REMOTE_ADDR' => 'not-an-ip']));
+    }
+
+    public function testTrustedProxySkipsInvalidForwardedEntriesUntilItFindsAnIp(): void
+    {
+        $resolver = new ClientIpResolver(['10.0.0.0/8']);
+
+        $this->assertSame('198.51.100.20', $resolver->resolve([
+            'REMOTE_ADDR' => '10.1.2.3',
+            'HTTP_X_FORWARDED_FOR' => 'unknown, 198.51.100.20, 10.1.2.3',
+        ]));
+    }
+
+    public function testTrustedHeaderOrderControlsWhichClientIpIsUsed(): void
+    {
+        $resolver = new ClientIpResolver(['127.0.0.1'], [
+            'HTTP_X_REAL_IP',
+            'HTTP_CF_CONNECTING_IP',
+        ]);
+
+        $this->assertSame('203.0.113.7', $resolver->resolve([
+            'REMOTE_ADDR' => '127.0.0.1',
+            'HTTP_CF_CONNECTING_IP' => '198.51.100.20',
+            'HTTP_X_REAL_IP' => '203.0.113.7',
+        ]));
+    }
 }

@@ -38,6 +38,21 @@ final class FormConfigValidatorTest extends TestCase
         $this->assertSame(['slack', 'generic'], $config['delivery_channels']);
     }
 
+    public function testNormalizesLegacyCaptchaAndNotificationConfig(): void
+    {
+        $config = FormConfigValidator::normalize('contact', [
+            'recipient' => 'hello@example.com',
+            'allowed_origins' => ['https://example.com'],
+            'turnstile' => true,
+            'notification_channels' => ['discord', 'generic'],
+        ]);
+
+        $this->assertSame('turnstile', $config['captcha_provider']);
+        $this->assertSame(['discord', 'generic'], $config['delivery_channels']);
+        $this->assertArrayNotHasKey('turnstile', $config);
+        $this->assertArrayNotHasKey('notification_channels', $config);
+    }
+
     public function testRejectsInvalidImportedFormConfig(): void
     {
         $this->expectException(InvalidArgumentException::class);

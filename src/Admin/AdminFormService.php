@@ -53,6 +53,8 @@ final class AdminFormService
     /** @param array<string, mixed> $config @return array<string, mixed> */
     public function valuesFromConfig(string $formId, array $config): array
     {
+        $config = FormConfigValidator::normalize($formId, $config);
+
         return [
             'form_id' => $formId,
             'recipient' => (string) ($config['recipient'] ?? ''),

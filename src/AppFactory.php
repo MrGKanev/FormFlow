@@ -74,8 +74,18 @@ final class AppFactory
     {
         $configuredForms = require $this->root . '/config/forms.php';
         $configuredForms = is_array($configuredForms) ? $configuredForms : [];
+        $forms = array_merge($configuredForms, $this->formRepository()->all());
+        $normalized = [];
 
-        return array_merge($configuredForms, $this->formRepository()->all());
+        foreach ($forms as $formId => $config) {
+            if (!is_string($formId) || !is_array($config)) {
+                throw new \InvalidArgumentException('Forms must be keyed by valid form IDs and contain configuration arrays.');
+            }
+
+            $normalized[$formId] = FormConfigValidator::normalize($formId, $config);
+        }
+
+        return $normalized;
     }
 
     public function adminController(array $forms, ?string $clientIp, bool $databaseExistedAtRequestStart = true): AdminController

@@ -170,6 +170,90 @@ final class FormHandlerTest extends TestCase
         }
     }
 
+    public function testFailedCaptchaRemovesAStoredUpload(): void
+    {
+        $directory = sys_get_temp_dir() . '/formflow-upload-' . bin2hex(random_bytes(6));
+        $source = tempnam(sys_get_temp_dir(), 'formflow-source-');
+        self::assertNotFalse($source);
+        file_put_contents($source, "%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n");
+        $_POST = [
+            'email' => 'ada@example.com',
+            'cf-turnstile-response' => 'bad-token',
+        ];
+        $_FILES = [
+            'attachment' => [
+                'name' => 'document.pdf',
+                'tmp_name' => $source,
+                'error' => UPLOAD_ERR_OK,
+                'size' => filesize($source),
+            ],
+        ];
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm(['uploads' => ['allowed_extensions' => ['pdf']]])],
+            turnstile: new FakeTurnstileVerifier(false),
+            uploadDirectory: $directory
+        );
+
+        try {
+            $result = $handler->handle('contact');
+
+            $this->assertSame(422, $result['status']);
+            $this->assertSame([], glob($directory . '/*') ?: []);
+        } finally {
+            foreach (glob($directory . '/*') ?: [] as $file) {
+                unlink($file);
+            }
+            if (is_dir($directory)) {
+                rmdir($directory);
+            }
+            if (is_file($source)) {
+                unlink($source);
+            }
+        }
+    }
+
+    public function testInvalidEmailRemovesAStoredUpload(): void
+    {
+        $directory = sys_get_temp_dir() . '/formflow-upload-' . bin2hex(random_bytes(6));
+        $source = tempnam(sys_get_temp_dir(), 'formflow-source-');
+        self::assertNotFalse($source);
+        file_put_contents($source, "%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n");
+        $_POST = ['email' => 'not-an-email'];
+        $_FILES = [
+            'attachment' => [
+                'name' => 'document.pdf',
+                'tmp_name' => $source,
+                'error' => UPLOAD_ERR_OK,
+                'size' => filesize($source),
+            ],
+        ];
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm([
+                'captcha_provider' => 'none',
+                'uploads' => ['allowed_extensions' => ['pdf']],
+            ])],
+            uploadDirectory: $directory
+        );
+
+        try {
+            $handler->handle('contact');
+            $this->fail('Expected an invalid email exception.');
+        } catch (InvalidArgumentException $exception) {
+            $this->assertSame('The email field is invalid.', $exception->getMessage());
+            $this->assertSame([], glob($directory . '/*') ?: []);
+        } finally {
+            foreach (glob($directory . '/*') ?: [] as $file) {
+                unlink($file);
+            }
+            if (is_dir($directory)) {
+                rmdir($directory);
+            }
+            if (is_file($source)) {
+                unlink($source);
+            }
+        }
+    }
+
     public function testUploadPolicyRejectsDangerousExtensionWithoutAllowList(): void
     {
         $directory = sys_get_temp_dir() . '/formflow-upload-' . bin2hex(random_bytes(6));

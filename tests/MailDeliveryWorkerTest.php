@@ -76,4 +76,17 @@ final class MailDeliveryWorkerTest extends TestCase
 
         $this->assertSame(['attempted' => 0, 'sent' => 0, 'failed' => 0, 'skipped' => 0], $summary);
     }
+
+    public function testSkipsPendingSubmissionWhenItsFormNoLongerExists(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $id = $repository->create('retired-form', ['email' => 'ada@example.com'], null, 'pending_mail');
+        $mail = new FakeMailSender();
+
+        $summary = (new MailDeliveryWorker([], $mail, $repository))->process();
+
+        $this->assertSame(['attempted' => 0, 'sent' => 0, 'failed' => 0, 'skipped' => 1], $summary);
+        $this->assertSame('pending_mail', $repository->find($id)['status']);
+        $this->assertSame([], $mail->sentMessages);
+    }
 }

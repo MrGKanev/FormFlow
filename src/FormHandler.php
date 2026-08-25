@@ -85,44 +85,54 @@ final class FormHandler
             );
         }
 
+        $textFields = $this->extractFields($_POST);
         $fields = array_merge(
-            $this->extractFields($_POST),
+            $textFields,
             $this->extractUploadedFiles($_FILES, $config['uploads'] ?? [])
         );
 
-        $this->validateEmailField($fields);
+        try {
+            $this->validateEmailField($fields);
 
-        $spamFilter = new SpamFilter($config['blocked_patterns'] ?? []);
+            $spamFilter = new SpamFilter($config['blocked_patterns'] ?? []);
 
-        if ($spamFilter->isSpam(SubmissionPayloadFormatter::displayFields($fields))) {
-            $this->repository->create($formId, $fields, $ipHash, 'blocked_spam');
+            if ($spamFilter->isSpam(SubmissionPayloadFormatter::displayFields($fields))) {
+                $this->deleteStoredUploads($fields);
+                $this->repository->create($formId, $textFields, $ipHash, 'blocked_spam');
 
-            return HttpResponse::json(
-                200,
-                ['success' => true, 'message' => 'Submission accepted.'],
-                $config['success_redirect'] ?? null
-            );
-        }
-
-        $captchaProvider = $this->captchaProvider($config);
-
-        if ($captchaProvider !== 'none') {
-            $token = (string) ($_POST[$this->captchaResponseField($captchaProvider)] ?? '');
-            $verified = $captchaProvider === 'turnstile'
-                ? $this->turnstile->verify($token, $this->clientIp())
-                : ($this->captchaVerifier?->verify($captchaProvider, $token, $this->clientIp()) ?? false);
-
-            if (!$verified) {
-                return HttpResponse::json(422, ['success' => false, 'message' => 'CAPTCHA validation failed.']);
+                return HttpResponse::json(
+                    200,
+                    ['success' => true, 'message' => 'Submission accepted.'],
+                    $config['success_redirect'] ?? null
+                );
             }
-        }
 
-        $submissionId = $this->repository->create(
-            $formId,
-            $fields,
-            $ipHash,
-            $this->deferMail ? 'pending_mail' : 'received'
-        );
+            $captchaProvider = $this->captchaProvider($config);
+
+            if ($captchaProvider !== 'none') {
+                $token = (string) ($_POST[$this->captchaResponseField($captchaProvider)] ?? '');
+                $verified = $captchaProvider === 'turnstile'
+                    ? $this->turnstile->verify($token, $this->clientIp())
+                    : ($this->captchaVerifier?->verify($captchaProvider, $token, $this->clientIp()) ?? false);
+
+                if (!$verified) {
+                    $this->deleteStoredUploads($fields);
+
+                    return HttpResponse::json(422, ['success' => false, 'message' => 'CAPTCHA validation failed.']);
+                }
+            }
+
+            $submissionId = $this->repository->create(
+                $formId,
+                $fields,
+                $ipHash,
+                $this->deferMail ? 'pending_mail' : 'received'
+            );
+        } catch (Throwable $exception) {
+            $this->deleteStoredUploads($fields);
+
+            throw $exception;
+        }
 
         if (!$this->deferMail) {
             try {
@@ -262,8 +272,12 @@ final class FormHandler
             return [];
         }
 
-        if (!is_dir($this->uploadDirectory)) {
-            mkdir($this->uploadDirectory, 0775, true);
+        if (
+            !is_dir($this->uploadDirectory)
+            && !mkdir($this->uploadDirectory, 0775, true)
+            && !is_dir($this->uploadDirectory)
+        ) {
+            throw new InvalidArgumentException('Upload directory could not be created.');
         }
 
         $stored = [];
@@ -290,7 +304,16 @@ final class FormHandler
 
         foreach ($acceptedEntries as $field => $file) {
             $this->validateUploadedFile($field, $file, $policy);
-            $this->storeUploadedFile($field, $file, $stored);
+        }
+
+        try {
+            foreach ($acceptedEntries as $field => $file) {
+                $this->storeUploadedFile($field, $file, $stored);
+            }
+        } catch (Throwable $exception) {
+            $this->deleteStoredUploads($stored);
+
+            throw $exception;
         }
 
         return $stored;
@@ -443,6 +466,38 @@ final class FormHandler
         $mimeType = finfo_file($finfo, $path);
 
         return is_string($mimeType) && $mimeType !== '' ? $mimeType : 'application/octet-stream';
+    }
+
+    /** @param array<string, mixed> $fields */
+    private function deleteStoredUploads(array $fields): void
+    {
+        $uploadRoot = realpath($this->uploadDirectory);
+
+        if ($uploadRoot === false) {
+            return;
+        }
+
+        foreach ($fields as $value) {
+            if (!is_array($value) || ($value['type'] ?? null) !== 'upload') {
+                continue;
+            }
+
+            $storedName = trim((string) ($value['stored_name'] ?? ''));
+
+            if ($storedName === '' || $storedName !== basename($storedName)) {
+                continue;
+            }
+
+            $path = realpath($uploadRoot . DIRECTORY_SEPARATOR . $storedName);
+
+            if (
+                $path !== false
+                && ($path === $uploadRoot || str_starts_with($path, $uploadRoot . DIRECTORY_SEPARATOR))
+                && is_file($path)
+            ) {
+                @unlink($path);
+            }
+        }
     }
 
     private function isSystemField(string $field): bool
