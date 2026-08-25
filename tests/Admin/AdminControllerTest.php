@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace formflow\Tests\Admin;
 
 use formflow\Admin\AdminController;
+use formflow\Admin\AdminSubmissionController;
 use formflow\AdminAuth;
 use formflow\AdminIpWhitelist;
 use formflow\AdminUserRepositoryInterface;
@@ -1166,8 +1167,8 @@ final class AdminControllerTest extends TestCase
 
     public function testCsvSafeCellNeutralizesFormulaInjection(): void
     {
-        $controller = $this->makeController(['203.0.113.10'], new SqliteSubmissionRepository(':memory:'));
-        $method = new \ReflectionMethod($controller, 'csvSafeCell');
+        $controller = (new \ReflectionClass(AdminSubmissionController::class))->newInstanceWithoutConstructor();
+        $method = new \ReflectionMethod(AdminSubmissionController::class, 'csvSafeCell');
 
         $this->assertSame("'=HYPERLINK(\"http://evil/\",\"x\")", $method->invoke($controller, '=HYPERLINK("http://evil/","x")'));
         $this->assertSame("'+1", $method->invoke($controller, '+1'));
