@@ -103,7 +103,7 @@ $command = $argv[1] ?? '';
 $databasePath = cliDatabasePath($root);
 
 if ($command === '--version' || $command === 'version') {
-    echo 'formflow ' . AppVersion::CURRENT . PHP_EOL;
+    echo 'formflow ' . AppVersion::current() . PHP_EOL;
     exit(0);
 }
 

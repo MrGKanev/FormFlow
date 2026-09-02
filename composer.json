@@ -1,5 +1,6 @@
 {
   "name": "formflow/formflow",
+  "version": "0.2.0",
   "description": "Minimal self-hosted PHP form backend",
   "type": "project",
   "license": "MIT",

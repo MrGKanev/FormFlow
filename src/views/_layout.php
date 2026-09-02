@@ -79,7 +79,7 @@ try {
             <?php endforeach; ?>
         </div>
         <div class="nav-spacer"></div>
-        <div class="nav-status"><span class="status-dot"></span><span>Self-hosted workspace</span><span class="nav-version">v<?= htmlspecialchars(\formflow\AppVersion::CURRENT, ENT_QUOTES, 'UTF-8') ?></span></div>
+        <div class="nav-status"><span class="status-dot"></span><span>Self-hosted workspace</span><span class="nav-version">v<?= htmlspecialchars(\formflow\AppVersion::current(), ENT_QUOTES, 'UTF-8') ?></span></div>
         <div class="nav-actions">
             <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch to dark theme" aria-pressed="false">
                 <span class="theme-toggle-icon" aria-hidden="true"></span>
@@ -115,7 +115,7 @@ try {
 <main id="main-content" class="container<?= htmlspecialchars($containerClass, ENT_QUOTES, 'UTF-8') ?>">
     <?= $content ?>
 </main>
-<span class="standalone-version">v<?= htmlspecialchars(\formflow\AppVersion::CURRENT, ENT_QUOTES, 'UTF-8') ?></span>
+<span class="standalone-version">v<?= htmlspecialchars(\formflow\AppVersion::current(), ENT_QUOTES, 'UTF-8') ?></span>
 <?php endif; ?>
 </body>
 </html>
