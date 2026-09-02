@@ -292,4 +292,36 @@ final class SqliteSubmissionRepositoryTest extends TestCase
         $this->assertSame('contact', $rows[0]['form_id']);
         $this->assertSame('received', $rows[0]['status']);
     }
+
+    public function testAnalyticsOverviewReturnsReconciledMetricsAndDailyTrend(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $sent = $repository->create('contact', [], null);
+        $repository->markSent($sent);
+        $repository->create('contact', [], null, 'failed');
+        $repository->create('support', [], null, 'blocked_spam');
+
+        $analytics = $repository->analyticsOverview(7);
+
+        $this->assertSame(3, $analytics['summary']['total']);
+        $this->assertSame(1, $analytics['summary']['sent']);
+        $this->assertSame(1, $analytics['summary']['failed']);
+        $this->assertSame(1, $analytics['summary']['blocked']);
+        $this->assertSame(50.0, $analytics['summary']['delivery_rate']);
+        $this->assertCount(7, $analytics['trend']);
+        $this->assertSame(3, array_sum(array_column($analytics['trend'], 'total')));
+        $this->assertSame('contact', $analytics['forms'][0]['form_id']);
+    }
+
+    public function testAnalyticsOverviewCanFilterOneForm(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $repository->create('contact', [], null);
+        $repository->create('support', [], null);
+
+        $analytics = $repository->analyticsOverview(30, 'support');
+
+        $this->assertSame(1, $analytics['summary']['total']);
+        $this->assertSame('support', $analytics['forms'][0]['form_id']);
+    }
 }

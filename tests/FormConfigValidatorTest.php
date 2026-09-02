@@ -21,6 +21,7 @@ final class FormConfigValidatorTest extends TestCase
         $this->assertSame('turnstile', $config['captcha_provider']);
         $this->assertSame(['max' => 5, 'window_minutes' => 10], $config['rate_limit_per_ip']);
         $this->assertSame([
+            'enabled' => true,
             'max_file_size_mb' => 10,
             'max_files' => 3,
             'allowed_extensions' => [],
@@ -61,6 +62,37 @@ final class FormConfigValidatorTest extends TestCase
         FormConfigValidator::normalize('contact', [
             'recipient' => 'not-an-email',
             'allowed_origins' => ['https://example.com'],
+        ]);
+    }
+
+    public function testNormalizesAutoReplyConfiguration(): void
+    {
+        $config = FormConfigValidator::normalize('contact', [
+            'recipient' => 'hello@example.com',
+            'allowed_origins' => ['https://example.com'],
+            'auto_reply' => [
+                'enabled' => true,
+                'subject' => 'Thanks, {{name}}',
+                'body' => 'We received your message.',
+            ],
+        ]);
+
+        $this->assertSame([
+            'enabled' => true,
+            'subject' => 'Thanks, {{name}}',
+            'body' => 'We received your message.',
+        ], $config['auto_reply']);
+    }
+
+    public function testEnabledAutoReplyRequiresSubjectAndBody(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Auto-reply subject and message are required');
+
+        FormConfigValidator::normalize('contact', [
+            'recipient' => 'hello@example.com',
+            'allowed_origins' => ['https://example.com'],
+            'auto_reply' => ['enabled' => true],
         ]);
     }
 }

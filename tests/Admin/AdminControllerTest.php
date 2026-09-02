@@ -618,6 +618,7 @@ final class AdminControllerTest extends TestCase
         $this->assertSame('turnstile', $forms['newsletter']['captcha_provider']);
         $this->assertArrayNotHasKey('turnstile', $forms['newsletter']);
         $this->assertSame([
+            'enabled' => true,
             'max_file_size_mb' => 6,
             'max_files' => 2,
             'allowed_extensions' => ['pdf', 'jpg'],
@@ -628,6 +629,36 @@ final class AdminControllerTest extends TestCase
             'slack_webhook_url' => 'https://hooks.slack.com/services/form-specific',
         ], $forms['newsletter']['notification_overrides']);
         $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', (string) $apiKeys->get('newsletter'));
+    }
+
+    public function testGuidedFormCreationGeneratesIdAndKeepsOptionalFeaturesDisabled(): void
+    {
+        $formRepository = new SqliteFormRepository(':memory:');
+        $controller = $this->makeController(formRepository: $formRepository);
+        $this->login($controller);
+        $controller->handle('admin/forms/new');
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = [
+            'csrf_token' => $this->csrfToken(),
+            'guided_create' => '1',
+            'form_name' => 'Customer feedback',
+            'recipient' => 'feedback@example.com',
+            'allowed_origins' => 'https://example.com',
+            'require_api_key' => '1',
+        ];
+
+        $result = $controller->handle('admin/forms/new');
+        $forms = $formRepository->all();
+        $formId = (string) array_key_first($forms);
+
+        $this->assertSame(302, $result['status']);
+        $this->assertMatchesRegularExpression('/^customer-feedback-[a-f0-9]{6}$/', $formId);
+        $this->assertSame('Customer feedback', $forms[$formId]['name']);
+        $this->assertSame('none', $forms[$formId]['captcha_provider']);
+        $this->assertFalse($forms[$formId]['uploads']['enabled']);
+        $this->assertSame([], $forms[$formId]['delivery_channels']);
+        $this->assertFalse($forms[$formId]['auto_reply']['enabled']);
     }
 
     public function testNewFormPageDoesNotPreselectDeliveryChannels(): void
@@ -1125,6 +1156,7 @@ final class AdminControllerTest extends TestCase
         $this->assertSame('new@example.com', $forms['newsletter']['recipient']);
         $this->assertTrue($forms['newsletter']['require_api_key']);
         $this->assertSame([
+            'enabled' => true,
             'max_file_size_mb' => 12,
             'max_files' => 4,
             'allowed_extensions' => ['pdf', 'png'],
@@ -1229,6 +1261,62 @@ final class AdminControllerTest extends TestCase
         $this->assertStringContainsString('Slack', $delivery['body']);
         $this->assertSame(200, $auditPage['status']);
         $this->assertStringContainsString('test.action', $auditPage['body']);
+    }
+
+    public function testAnalyticsPageRendersSourceBackedMetrics(): void
+    {
+        $submissions = new SqliteSubmissionRepository(':memory:');
+        $id = $submissions->create('contact', ['name' => 'Ada'], null);
+        $submissions->markSent($id);
+        $controller = $this->makeController(['203.0.113.10'], $submissions);
+        $this->login($controller);
+
+        $_GET = ['days' => '7', 'form_id' => 'contact'];
+        $result = $controller->handle('admin/analytics');
+
+        $this->assertSame(200, $result['status']);
+        $this->assertStringContainsString('<h1>Analytics</h1>', $result['body']);
+        $this->assertStringContainsString('Delivery rate', $result['body']);
+        $this->assertStringContainsString('100.0%', $result['body']);
+    }
+
+    public function testAnalyticsPageRendersEmptyStateWithoutSubmissions(): void
+    {
+        $controller = $this->makeController(submissions: new SqliteSubmissionRepository(':memory:'));
+        $this->login($controller);
+
+        $result = $controller->handle('admin/analytics');
+
+        $this->assertSame(200, $result['status']);
+        $this->assertStringContainsString('<h1>Analytics</h1>', $result['body']);
+        $this->assertStringContainsString('No submissions in this period.', $result['body']);
+        $this->assertStringContainsString('0.0%', $result['body']);
+    }
+
+    public function testWebhookReplayRouteCreatesNewQueuedDelivery(): void
+    {
+        $deliveries = new SqliteWebhookDeliveryRepository(':memory:');
+        $deliveries->record(
+            'contact',
+            'generic',
+            'failed',
+            2,
+            'HTTP 500',
+            'https://example.test/hook',
+            ['form_id' => 'contact']
+        );
+        $id = (int) $deliveries->deliveryLog()[0]['id'];
+        $controller = $this->makeController(webhookDeliveries: $deliveries);
+        $this->login($controller);
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = ['csrf_token' => $this->csrfToken()];
+        $result = $controller->handle('admin/delivery/' . $id . '/replay');
+
+        $this->assertSame(302, $result['status']);
+        $this->assertSame('/admin/delivery', $result['redirect']);
+        $this->assertCount(2, $deliveries->deliveryLog());
+        $this->assertSame('pending', $deliveries->deliveryLog()[0]['status']);
     }
 
     public function testSystemPageWarnsWhenDatabaseWasRecreatedDuringRequest(): void

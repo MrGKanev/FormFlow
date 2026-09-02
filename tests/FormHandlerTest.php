@@ -82,6 +82,30 @@ final class FormHandlerTest extends TestCase
         );
     }
 
+    public function testSuccessfulSubmissionSendsPersonalizedAutoReply(): void
+    {
+        $_POST = ['email' => 'ada@example.com', 'name' => 'Ada'];
+        $mail = new FakeMailSender();
+        $handler = $this->makeHandler([
+            'contact' => $this->contactForm([
+                'captcha_provider' => 'none',
+                'auto_reply' => [
+                    'enabled' => true,
+                    'subject' => 'Thanks, {{name}}',
+                    'body' => 'We received your message for {{form_id}}.',
+                ],
+            ]),
+        ], $mail);
+
+        $response = $handler->handle('contact');
+
+        $this->assertSame(200, $response['status']);
+        $this->assertCount(1, $mail->autoReplies);
+        $this->assertSame('ada@example.com', $mail->autoReplies[0]['recipient']);
+        $this->assertSame('Thanks, Ada', $mail->autoReplies[0]['subject']);
+        $this->assertSame('We received your message for contact.', $mail->autoReplies[0]['body']);
+    }
+
     public function testUploadPolicyRejectsDisallowedFileExtension(): void
     {
         $directory = sys_get_temp_dir() . '/formflow-upload-' . bin2hex(random_bytes(6));

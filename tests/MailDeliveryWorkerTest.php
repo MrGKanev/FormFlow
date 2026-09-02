@@ -89,4 +89,25 @@ final class MailDeliveryWorkerTest extends TestCase
         $this->assertSame('pending_mail', $repository->find($id)['status']);
         $this->assertSame([], $mail->sentMessages);
     }
+
+    public function testQueuedDeliveryAlsoSendsConfiguredAutoReply(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $repository->create('contact', ['email' => 'ada@example.com', 'name' => 'Ada'], null, 'pending_mail');
+        $mail = new FakeMailSender();
+
+        (new MailDeliveryWorker([
+            'contact' => [
+                'recipient' => 'owner@example.com',
+                'auto_reply' => [
+                    'enabled' => true,
+                    'subject' => 'Hi {{name}}',
+                    'body' => 'Message received.',
+                ],
+            ],
+        ], $mail, $repository))->process();
+
+        $this->assertCount(1, $mail->autoReplies);
+        $this->assertSame('Hi Ada', $mail->autoReplies[0]['subject']);
+    }
 }

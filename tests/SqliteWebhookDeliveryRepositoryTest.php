@@ -61,4 +61,36 @@ final class SqliteWebhookDeliveryRepositoryTest extends TestCase
         $this->assertSame('Temporary failure.', $entry['error_message']);
         $this->assertSame(1, $repository->countByStatus('pending'));
     }
+
+    public function testReplayCreatesANewPendingDeliveryAndPreservesOriginal(): void
+    {
+        $repository = new SqliteWebhookDeliveryRepository(':memory:');
+        $repository->record(
+            'contact',
+            'generic',
+            'failed',
+            2,
+            'HTTP 500',
+            'https://example.test/hook',
+            ['form_id' => 'contact']
+        );
+        $originalId = (int) $repository->deliveryLog()[0]['id'];
+
+        $replayId = $repository->replay($originalId);
+
+        $this->assertNotNull($replayId);
+        $this->assertNotSame($originalId, $replayId);
+        $this->assertCount(2, $repository->deliveryLog());
+        $this->assertSame('pending', $repository->deliveryLog()[0]['status']);
+        $this->assertSame('failed', $repository->deliveryLog()[1]['status']);
+        $this->assertSame('https://example.test/hook', $repository->due()[0]['url']);
+    }
+
+    public function testLegacyDeliveryWithoutPayloadCannotBeReplayed(): void
+    {
+        $repository = new SqliteWebhookDeliveryRepository(':memory:');
+        $repository->record('contact', 'slack', 'sent', 1);
+
+        $this->assertNull($repository->replay((int) $repository->deliveryLog()[0]['id']));
+    }
 }

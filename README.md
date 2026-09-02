@@ -9,7 +9,7 @@ Minimal self-hosted PHP backend for accepting HTML forms (like Web3Forms/Formspr
 - Selectable CAPTCHA providers: Cloudflare Turnstile, hCaptcha, Google reCAPTCHA v2, and Friendly Captcha.
 - Built-in spam controls: honeypot field, keyword filtering, allowed origins/referers, daily caps, and global IP blocklist.
 - Delivery integrations for email plus Discord, Slack, Telegram, and generic webhooks, with per-form webhook overrides.
-- Admin panel for submissions, resend/review/delete actions, CSV export, delivery logs, audit log, users, backups, and config import/export.
+- Responsive light/dark admin workspace with source-backed analytics, saved submission views, webhook inspection/replay, form templates, automatic replies, CSV export, audit log, users, backups, and config import/export.
 
 ## Requirements
 
@@ -78,9 +78,10 @@ Minimal admin panel for reviewing submissions, protected with login + IP whiteli
 
 Routes:
 
-- `/admin` - dashboard with paginated submissions, search, date range filters, page size control, bulk actions, and form analytics.
-- `/admin/forms` - review configured forms and copy integration snippets. Snippets use `APP_URL`, so forms can submit from separate websites to one hosted FormFlow instance.
-- `/admin/forms/new` - create a new database-backed form endpoint.
+- `/admin` - dashboard with paginated submissions, keyboard search (`/`), date range filters, browser-local saved views, page size control, select-all bulk actions, and form analytics.
+- `/admin/analytics` - 7/30/90-day submission trends, delivery rate, status breakdown, and top forms, optionally filtered by form.
+- `/admin/forms` - review configured forms and copy integration snippets with one click. Snippets use `APP_URL`, so forms can submit from separate websites to one hosted FormFlow instance.
+- `/admin/forms/new` - create a new database-backed form endpoint from contact, newsletter, support, or application templates.
 - `/admin/forms/{id}/edit` - edit an existing form, storing changes as a database-backed configuration.
 - `/admin/system` - operational status for storage, delivery queues, trusted proxy setup, and runtime checks.
 - `/admin/login` - login form.
@@ -91,7 +92,7 @@ Routes:
 - `/admin/whitelist` - IP/CIDR access control for the admin panel, grouped under the Settings sub-navigation.
 - `/admin/users` - create/delete additional admin users, grouped under the Settings sub-navigation.
 - `/admin/audit` - recent admin actions, grouped under the Settings sub-navigation.
-- `/admin/delivery` - email and integration delivery logs, including webhook retry attempts and failures.
+- `/admin/delivery` - email and integration delivery logs, including redacted endpoint inspection, retained payload preview, retry attempts, failures, and replay for newly recorded webhook deliveries.
 - `/admin/export` - CSV export of submissions, respecting dashboard search/date/status/form filters.
 - `/admin/backup` - download a SQLite database backup.
 - `/admin/config/export` and `/admin/config/import` - move settings/forms/security config as JSON.
@@ -109,6 +110,22 @@ composer install
 composer validate --strict
 composer audit --no-interaction
 vendor/bin/phpunit
+```
+
+## Releases and versioning
+
+`composer.json` is the single source of truth for the FormFlow version. The same value is displayed in the admin interface and returned by:
+
+```bash
+php bin/formflow --version
+```
+
+For a release, update only the `version` field in `composer.json`, refresh the lock metadata, commit the change, and create a matching tag:
+
+```bash
+composer update --lock --no-install --no-scripts
+git tag -a v0.2.0 -m "FormFlow 0.2.0"
+git push origin v0.2.0
 ```
 
 ## Operations
@@ -173,7 +190,7 @@ The included image serves `public/` through Apache and mounts `storage/` for SQL
 ## Configuration
 
 - Forms can be created from `/admin/forms`. Starter/static forms can also live in `config/forms.php`.
-- Per form: recipient, `allowed_origins`, `subject`, `success_redirect`, `captcha_provider`, `require_api_key`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`, upload limits, `delivery_channels`, and optional per-form integration overrides. Upload rules support a size limit (1–100 MB), file-count limit (1–20), and an optional allow-list of filename extensions. Form endpoints accept all submitted user fields; system fields such as `_key`, `_website`, `cf-turnstile-response`, `h-captcha-response`, `g-recaptcha-response`, `frc-captcha-response`, and `csrf_token` are not stored or emailed. A key is generated automatically with every new database-backed form and included in its integration snippet. New admin-created forms require the API key by default.
+- Per form: recipient, `allowed_origins`, `subject`, `success_redirect`, `captcha_provider`, `require_api_key`, `rate_limit_per_ip` (`max`, `window_minutes`), `daily_limit`, `blocked_patterns`, upload limits, `delivery_channels`, optional per-form integration overrides, and optional `auto_reply` (`enabled`, `subject`, `body`). Auto-reply templates support submitted-field placeholders such as `{{name}}` and `{{email}}`, plus `{{form_id}}`, and are sent only when the submission has a valid `email` field. Upload rules support a size limit (1–100 MB), file-count limit (1–20), and an optional allow-list of filename extensions. Form endpoints accept all submitted user fields; system fields such as `_key`, `_website`, `cf-turnstile-response`, `h-captcha-response`, `g-recaptcha-response`, `frc-captcha-response`, and `csrf_token` are not stored or emailed. A key is generated automatically with every new database-backed form and included in its integration snippet. New admin-created forms require the API key by default.
 - Global app settings can be edited from `/admin/settings`. It writes selected values to `.env`, login-rate-limit values to `config/admin.php`, and the global IP blocklist to `config/security.php`. Saving one Settings tab preserves values configured in the other tabs.
 - Mail can be configured with standard SMTP fields: `SMTP_HOST`, `SMTP_PORT`, `SMTP_ENCRYPTION` (`tls`, `ssl`, or `none`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM`, and `MAIL_FROM_NAME`. `MAILER_DSN` is still supported as an advanced override; when set, it takes precedence over the individual SMTP fields.
 - Notification integrations are configured on `/admin/integrations`:
