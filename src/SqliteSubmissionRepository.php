@@ -287,6 +287,85 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         return $statement->fetchAll();
     }
 
+    public function analyticsOverview(int $days = 30, ?string $formId = null): array
+    {
+        $days = in_array($days, [7, 30, 90], true) ? $days : 30;
+        $cutoff = Clock::relativeIso(-(($days - 1) * 86400));
+        $where = ' WHERE created_at >= :cutoff';
+        $params = ['cutoff' => substr($cutoff, 0, 10) . 'T00:00:00+00:00'];
+
+        if ($formId !== null && $formId !== '') {
+            $where .= ' AND form_id = :form_id';
+            $params['form_id'] = $formId;
+        }
+
+        $summaryStatement = $this->pdo->prepare(
+            'SELECT COUNT(*) AS total,
+                    SUM(CASE WHEN status = "sent" THEN 1 ELSE 0 END) AS sent,
+                    SUM(CASE WHEN status = "failed" THEN 1 ELSE 0 END) AS failed,
+                    SUM(CASE WHEN status LIKE "blocked_%" THEN 1 ELSE 0 END) AS blocked
+             FROM submissions' . $where
+        );
+        $summaryStatement->execute($params);
+        $summaryRow = $summaryStatement->fetch() ?: [];
+        $total = (int) ($summaryRow['total'] ?? 0);
+        $sent = (int) ($summaryRow['sent'] ?? 0);
+        $blocked = (int) ($summaryRow['blocked'] ?? 0);
+        $deliverable = max(0, $total - $blocked);
+
+        $trendStatement = $this->pdo->prepare(
+            'SELECT substr(created_at, 1, 10) AS date, COUNT(*) AS total
+             FROM submissions' . $where . '
+             GROUP BY substr(created_at, 1, 10)
+             ORDER BY date ASC'
+        );
+        $trendStatement->execute($params);
+        $trendByDate = [];
+
+        foreach ($trendStatement->fetchAll() as $row) {
+            $trendByDate[(string) $row['date']] = (int) $row['total'];
+        }
+
+        $trend = [];
+        for ($offset = $days - 1; $offset >= 0; $offset--) {
+            $date = substr(Clock::relativeIso(-($offset * 86400)), 0, 10);
+            $trend[] = ['date' => $date, 'total' => $trendByDate[$date] ?? 0];
+        }
+
+        $statusStatement = $this->pdo->prepare(
+            'SELECT status, COUNT(*) AS total FROM submissions' . $where . '
+             GROUP BY status ORDER BY total DESC, status ASC'
+        );
+        $statusStatement->execute($params);
+        $statuses = array_map(
+            static fn (array $row): array => ['status' => (string) $row['status'], 'total' => (int) $row['total']],
+            $statusStatement->fetchAll()
+        );
+
+        $formStatement = $this->pdo->prepare(
+            'SELECT form_id, COUNT(*) AS total FROM submissions' . $where . '
+             GROUP BY form_id ORDER BY total DESC, form_id ASC LIMIT 8'
+        );
+        $formStatement->execute($params);
+        $forms = array_map(
+            static fn (array $row): array => ['form_id' => (string) $row['form_id'], 'total' => (int) $row['total']],
+            $formStatement->fetchAll()
+        );
+
+        return [
+            'summary' => [
+                'total' => $total,
+                'sent' => $sent,
+                'failed' => (int) ($summaryRow['failed'] ?? 0),
+                'blocked' => $blocked,
+                'delivery_rate' => $deliverable > 0 ? round(($sent / $deliverable) * 100, 1) : 0.0,
+            ],
+            'trend' => $trend,
+            'statuses' => $statuses,
+            'forms' => $forms,
+        ];
+    }
+
     public function count(
         ?string $formId,
         ?string $status,

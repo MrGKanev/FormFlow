@@ -2,6 +2,15 @@
 /** @var list<array<string, mixed>> $entries */
 /** @var list<array<string, mixed>> $webhookEntries */
 $statusClass = static fn (string $value): string => 'status-' . preg_replace('/[^a-z0-9_-]+/i', '-', strtolower($value));
+$displayEndpoint = static function (?string $url): string {
+    if ($url === null || trim($url) === '') {
+        return 'Not retained';
+    }
+
+    $parts = parse_url($url);
+    $host = (string) ($parts['host'] ?? 'webhook');
+    return $host . '/••••';
+};
 ?>
 <div class="page-header">
     <div>
@@ -28,7 +37,7 @@ $statusClass = static fn (string $value): string => 'status-' . preg_replace('/[
 <div class="table-wrap">
     <table>
         <thead>
-            <tr><th>Form</th><th>Integration</th><th>Status</th><th>Attempts</th><th>Created</th><th>Error</th></tr>
+            <tr><th>Form</th><th>Integration</th><th>Status</th><th>Attempts</th><th>Created</th><th>Inspector</th></tr>
         </thead>
         <tbody>
         <?php foreach ($webhookEntries as $entry): ?>
@@ -39,7 +48,25 @@ $statusClass = static fn (string $value): string => 'status-' . preg_replace('/[
                 <td><span class="status-pill <?= htmlspecialchars($statusClass($status), ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($status, ENT_QUOTES, 'UTF-8') ?></span></td>
                 <td><?= (int) $entry['attempts'] ?></td>
                 <td><?= htmlspecialchars((string) $entry['created_at'], ENT_QUOTES, 'UTF-8') ?></td>
-                <td><?= !empty($entry['error_message']) ? htmlspecialchars((string) $entry['error_message'], ENT_QUOTES, 'UTF-8') : '<span class="muted">None</span>' ?></td>
+                <td class="delivery-inspector">
+                    <details>
+                        <summary>Inspect</summary>
+                        <div class="inspector-panel">
+                            <span class="inspector-label">Endpoint</span>
+                            <code><?= htmlspecialchars($displayEndpoint(isset($entry['url']) ? (string) $entry['url'] : null), ENT_QUOTES, 'UTF-8') ?></code>
+                            <?php if (!empty($entry['error_message'])): ?><span class="inspector-label">Last error</span><p class="error-text"><?= htmlspecialchars((string) $entry['error_message'], ENT_QUOTES, 'UTF-8') ?></p><?php endif; ?>
+                            <span class="inspector-label">Payload</span>
+                            <?php $payload = !empty($entry['payload_json']) ? json_decode((string) $entry['payload_json'], true) : null; ?>
+                            <pre><?= htmlspecialchars($payload === null ? 'Payload was not retained for this delivery.' : (string) json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), ENT_QUOTES, 'UTF-8') ?></pre>
+                            <?php if (!empty($entry['url']) && !empty($entry['payload_json'])): ?>
+                                <form method="POST" action="/admin/delivery/<?= (int) $entry['id'] ?>/replay" class="inline">
+                                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars((string) ($_SESSION['csrf_token'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
+                                    <button type="submit" class="secondary compact" data-confirm="Queue a new replay of this webhook delivery?">Replay</button>
+                                </form>
+                            <?php endif; ?>
+                        </div>
+                    </details>
+                </td>
             </tr>
         <?php endforeach; ?>
         <?php if ($webhookEntries === []): ?>

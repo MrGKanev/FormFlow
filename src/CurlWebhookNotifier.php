@@ -114,7 +114,7 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
             }
 
             if ($error === null) {
-                $this->deliveries?->record($formId, $channel, 'sent', $attempt);
+                $this->deliveries?->record($formId, $channel, 'sent', $attempt, null, $url, $payload);
                 return;
             }
 
@@ -123,7 +123,7 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
             }
         }
 
-        $this->deliveries?->record($formId, $channel, 'failed', self::MAX_ATTEMPTS, $error);
+        $this->deliveries?->record($formId, $channel, 'failed', self::MAX_ATTEMPTS, $error, $url, $payload);
     }
 
 }

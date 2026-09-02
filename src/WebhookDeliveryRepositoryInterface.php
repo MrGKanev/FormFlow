@@ -11,7 +11,9 @@ interface WebhookDeliveryRepositoryInterface
         string $channel,
         string $status,
         int $attempts,
-        ?string $errorMessage = null
+        ?string $errorMessage = null,
+        ?string $url = null,
+        ?array $payload = null
     ): void;
 
     /** @param array<string, mixed> $payload */
@@ -27,6 +29,8 @@ interface WebhookDeliveryRepositoryInterface
     public function countByStatus(string $status): int;
 
     public function oldestCreatedAtByStatus(string $status): ?string;
+
+    public function replay(int $id): ?int;
 
     /** @return list<array<string, mixed>> */
     public function deliveryLog(int $limit = 100): array;

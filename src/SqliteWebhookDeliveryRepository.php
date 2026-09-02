@@ -35,11 +35,13 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
         string $channel,
         string $status,
         int $attempts,
-        ?string $errorMessage = null
+        ?string $errorMessage = null,
+        ?string $url = null,
+        ?array $payload = null
     ): void {
         $statement = $this->pdo->prepare(
-            'INSERT INTO webhook_deliveries (form_id, channel, status, attempts, error_message, created_at, sent_at)
-             VALUES (:form_id, :channel, :status, :attempts, :error_message, :created_at, :sent_at)'
+            'INSERT INTO webhook_deliveries (form_id, channel, status, attempts, error_message, created_at, sent_at, url, payload_json)
+             VALUES (:form_id, :channel, :status, :attempts, :error_message, :created_at, :sent_at, :url, :payload_json)'
         );
 
         $createdAt = Clock::nowIso();
@@ -51,6 +53,8 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
             'error_message' => $errorMessage === null ? null : mb_substr($errorMessage, 0, 1000),
             'created_at' => $createdAt,
             'sent_at' => $status === 'sent' ? $createdAt : null,
+            'url' => $url,
+            'payload_json' => $payload === null ? null : json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
         ]);
     }
 
@@ -130,7 +134,7 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
     public function deliveryLog(int $limit = 100): array
     {
         $statement = $this->pdo->prepare(
-            'SELECT id, form_id, channel, status, attempts, error_message, created_at, sent_at
+            'SELECT id, form_id, channel, status, attempts, error_message, created_at, sent_at, url, payload_json
              FROM webhook_deliveries
              ORDER BY created_at DESC, id DESC
              LIMIT :limit'
@@ -139,6 +143,40 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
         $statement->execute();
 
         return $statement->fetchAll();
+    }
+
+    public function replay(int $id): ?int
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT form_id, channel, url, payload_json FROM webhook_deliveries WHERE id = :id'
+        );
+        $statement->execute(['id' => $id]);
+        $delivery = $statement->fetch();
+
+        if (
+            $delivery === false
+            || trim((string) ($delivery['url'] ?? '')) === ''
+            || trim((string) ($delivery['payload_json'] ?? '')) === ''
+        ) {
+            return null;
+        }
+
+        $createdAt = Clock::nowIso();
+        $insert = $this->pdo->prepare(
+            'INSERT INTO webhook_deliveries
+                (form_id, channel, status, attempts, error_message, created_at, sent_at, url, payload_json, next_attempt_at)
+             VALUES (:form_id, :channel, "pending", 0, NULL, :created_at, NULL, :url, :payload_json, :next_attempt_at)'
+        );
+        $insert->execute([
+            'form_id' => (string) $delivery['form_id'],
+            'channel' => (string) $delivery['channel'],
+            'created_at' => $createdAt,
+            'url' => (string) $delivery['url'],
+            'payload_json' => (string) $delivery['payload_json'],
+            'next_attempt_at' => $createdAt,
+        ]);
+
+        return (int) $this->pdo->lastInsertId();
     }
 
     public function countByStatus(string $status): int

@@ -19,7 +19,7 @@ final class AdminSubmissionController
     public function __construct(
         private readonly SubmissionRepositoryInterface $submissions,
         ?MailSenderInterface $mailSender,
-        array $forms,
+        private readonly array $forms,
         private readonly ?WebhookDeliveryRepositoryInterface $webhookDeliveries,
         private readonly string $uploadDirectory,
         private readonly ?AuditLogRepositoryInterface $auditLog,
@@ -233,6 +233,44 @@ final class AdminSubmissionController
             'entries' => $this->submissions->deliveryLog(),
             'webhookEntries' => $this->webhookDeliveries?->deliveryLog() ?? [],
         ], 'Delivery log'));
+    }
+
+    /** @return array<string, mixed> */
+    public function replayWebhook(int $id): array
+    {
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            return $this->htmlResponse(405, '<h1>Method not allowed</h1>');
+        }
+
+        if (!$this->verifyCsrfToken()) {
+            return $this->htmlResponse(419, '<h1>Invalid CSRF token.</h1>');
+        }
+
+        $replayId = $this->webhookDeliveries?->replay($id);
+
+        if ($replayId === null) {
+            return $this->htmlResponse(422, '<h1>This delivery cannot be replayed.</h1>');
+        }
+
+        $this->recordAudit('webhook.replay', 'Queued webhook delivery #' . $id . ' as #' . $replayId . '.');
+
+        return ['status' => 302, 'body' => '', 'redirect' => '/admin/delivery'];
+    }
+
+    /** @return array<string, mixed> */
+    public function analytics(): array
+    {
+        $days = (int) ($_GET['days'] ?? 30);
+        $days = in_array($days, [7, 30, 90], true) ? $days : 30;
+        $formId = trim((string) ($_GET['form_id'] ?? ''));
+        $formId = $formId !== '' ? $formId : null;
+
+        return $this->htmlResponse(200, $this->renderer->render('analytics', [
+            'analytics' => $this->submissions->analyticsOverview($days, $formId),
+            'days' => $days,
+            'formId' => $formId,
+            'forms' => array_keys($this->forms),
+        ], 'Analytics'));
     }
 
     private function csvSafeCell(mixed $value): mixed

@@ -109,6 +109,7 @@ final class AdminController
     {
         $exactRoutes = [
             'admin' => fn (): array => $this->submissionController()->dashboard(),
+            'admin/analytics' => fn (): array => $this->submissionController()->analytics(),
             'admin/export' => fn (): array => $this->submissionController()->export(),
             'admin/submissions/bulk' => fn (): array => $this->submissionController()->bulkAction(),
             'admin/delivery' => fn (): array => $this->submissionController()->delivery(),
@@ -133,6 +134,7 @@ final class AdminController
             '#^admin/submissions/(\d+)$#' => fn (array $matches): array => $this->submissionController()->detail((int) $matches[1]),
             '#^admin/submissions/(\d+)/uploads/([^/]+)$#' => fn (array $matches): array => $this->submissionController()->download((int) $matches[1], rawurldecode((string) $matches[2])),
             '#^admin/submissions/(\d+)/action$#' => fn (array $matches): array => $this->submissionController()->action((int) $matches[1]),
+            '#^admin/delivery/(\d+)/replay$#' => fn (array $matches): array => $this->submissionController()->replayWebhook((int) $matches[1]),
             '#^admin/forms/([^/]+)/edit$#' => fn (array $matches): array => $this->formController()->edit((string) $matches[1]),
             '#^admin/forms/([^/]+)/delete$#' => fn (array $matches): array => $this->formController()->delete((string) $matches[1]),
         ];
@@ -680,9 +682,10 @@ final class AdminController
     {
         // REMOTE_ADDR alone cannot prove the request is local: a reverse proxy
         // talking to PHP-FPM over 127.0.0.1/a unix socket (the documented Nginx
-        // setup in this project) makes every request look loopback unless
-        // real_ip is configured. Require an explicit non-production opt-in too.
-        if (!$this->devLoginEnabled) {
+        // setup in this project) makes every request look loopback unless real_ip
+        // is configured. The PHP built-in server is an explicit local runtime,
+        // while every other SAPI still requires the non-production opt-in.
+        if (!$this->devLoginEnabled && PHP_SAPI !== 'cli-server') {
             return false;
         }
 

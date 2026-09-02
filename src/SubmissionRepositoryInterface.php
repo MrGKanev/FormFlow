@@ -62,6 +62,9 @@ interface SubmissionRepositoryInterface
     /** @return list<array<string, mixed>> */
     public function analytics(): array;
 
+    /** @return array{summary: array<string, int|float>, trend: list<array{date: string, total: int}>, statuses: list<array{status: string, total: int}>, forms: list<array{form_id: string, total: int}>} */
+    public function analyticsOverview(int $days = 30, ?string $formId = null): array;
+
     public function count(
         ?string $formId,
         ?string $status,
