@@ -10,7 +10,7 @@ use Symfony\Component\Mailer\Transport;
 use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email;
 
-final class MailService implements MailSenderInterface
+final class MailService implements MailSenderInterface, AutoReplySenderInterface
 {
     private MailerInterface $mailer;
 
@@ -40,6 +40,18 @@ final class MailService implements MailSenderInterface
 
             $email->replyTo(new Address((string) $fields['email'], $replyName));
         }
+
+        $this->mailer->send($email);
+    }
+
+    public function sendAutoReply(string $recipient, string $subject, string $body): void
+    {
+        $email = (new Email())
+            ->from(new Address($this->fromEmail, $this->fromName))
+            ->to($recipient)
+            ->subject($subject)
+            ->text($body)
+            ->html('<div style="font-family:system-ui,sans-serif;line-height:1.6;white-space:pre-wrap">' . htmlspecialchars($body, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</div>');
 
         $this->mailer->send($email);
     }

@@ -143,6 +143,11 @@ final class FormHandler
                 );
 
                 $this->repository->markSent($submissionId);
+
+                try {
+                    AutoReply::send($this->mailService, $formId, $config, $fields);
+                } catch (Throwable) {
+                }
             } catch (Throwable $exception) {
                 $this->repository->markFailed($submissionId, $exception->getMessage());
 
@@ -270,6 +275,10 @@ final class FormHandler
     {
         if ($files === [] || $this->uploadDirectory === '') {
             return [];
+        }
+
+        if (array_key_exists('enabled', $policy) && empty($policy['enabled'])) {
+            throw new InvalidArgumentException('File uploads are not enabled for this form.');
         }
 
         if (

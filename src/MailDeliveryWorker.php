@@ -57,6 +57,11 @@ final class MailDeliveryWorker
                     SubmissionPayloadFormatter::displayFields($payload)
                 );
                 $this->submissions->markSent((int) $submission['id']);
+
+                try {
+                    AutoReply::send($this->mailSender, $formId, $config, $payload);
+                } catch (Throwable) {
+                }
                 $summary['sent']++;
             } catch (Throwable $exception) {
                 $this->submissions->markFailed((int) $submission['id'], $exception->getMessage());

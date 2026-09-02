@@ -21,6 +21,10 @@ final class AdminFormService
 
     public function create(array $input): string
     {
+        if (trim((string) ($input['form_id'] ?? '')) === '') {
+            $input['form_id'] = $this->generateFormId($input);
+        }
+
         [$formId, $config] = FormConfigValidator::fromAdminInput($input);
 
         if (isset($this->forms[$formId]) || $this->formRepository->exists($formId)) {
@@ -29,6 +33,22 @@ final class AdminFormService
 
         $this->formRepository->create($formId, $config);
         $this->apiKeys->regenerate($formId);
+
+        return $formId;
+    }
+
+    /** @param array<string, mixed> $input */
+    private function generateFormId(array $input): string
+    {
+        $name = trim((string) ($input['form_name'] ?? $input['template'] ?? 'form'));
+        $ascii = function_exists('iconv') ? iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $name) : false;
+        $base = strtolower((string) ($ascii === false ? $name : $ascii));
+        $base = trim((string) preg_replace('/[^a-z0-9]+/', '-', $base), '-');
+        $base = substr($base !== '' ? $base : 'form', 0, 50);
+
+        do {
+            $formId = $base . '-' . bin2hex(random_bytes(3));
+        } while (isset($this->forms[$formId]) || $this->formRepository->exists($formId));
 
         return $formId;
     }
@@ -57,6 +77,7 @@ final class AdminFormService
 
         return [
             'form_id' => $formId,
+            'form_name' => (string) ($config['name'] ?? $formId),
             'recipient' => (string) ($config['recipient'] ?? ''),
             'allowed_origins' => implode(PHP_EOL, $config['allowed_origins'] ?? []),
             'subject' => (string) ($config['subject'] ?? ''),
@@ -70,6 +91,7 @@ final class AdminFormService
             'upload_max_file_size_mb' => (string) (int) ($config['uploads']['max_file_size_mb'] ?? 10),
             'upload_max_files' => (string) (int) ($config['uploads']['max_files'] ?? 3),
             'upload_allowed_extensions' => implode(PHP_EOL, $config['uploads']['allowed_extensions'] ?? []),
+            'uploads_enabled' => !empty($config['uploads']['enabled']) ? '1' : '',
             'delivery_channels' => is_array($config['delivery_channels'] ?? null)
                 ? $config['delivery_channels']
                 : [],
@@ -78,6 +100,9 @@ final class AdminFormService
             'generic_webhook_url' => (string) ($config['notification_overrides']['generic_webhook_url'] ?? ''),
             'telegram_bot_token' => (string) ($config['notification_overrides']['telegram_bot_token'] ?? ''),
             'telegram_chat_id' => (string) ($config['notification_overrides']['telegram_chat_id'] ?? ''),
+            'auto_reply_enabled' => !empty($config['auto_reply']['enabled']) ? '1' : '',
+            'auto_reply_subject' => (string) ($config['auto_reply']['subject'] ?? ''),
+            'auto_reply_body' => (string) ($config['auto_reply']['body'] ?? ''),
         ];
     }
 }

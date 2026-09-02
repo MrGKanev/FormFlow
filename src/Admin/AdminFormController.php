@@ -8,6 +8,7 @@ use formflow\AdminAuth;
 use formflow\AuditLogRepositoryInterface;
 use formflow\FormApiKeyRepositoryInterface;
 use formflow\FormConfigRepositoryInterface;
+use formflow\FormTemplateCatalog;
 use InvalidArgumentException;
 
 final class AdminFormController
@@ -42,7 +43,7 @@ final class AdminFormController
             }
 
             try {
-                $formId = $this->service->create($_POST);
+                $formId = $this->service->create(FormTemplateCatalog::apply($_POST));
                 $this->recordAudit('form.create', 'Created form "' . $formId . '" with an API key.');
             } catch (InvalidArgumentException $exception) {
                 return $this->htmlResponse(422, $this->renderCreator($exception->getMessage(), $_POST));
@@ -146,6 +147,7 @@ final class AdminFormController
             'csrfToken' => $_SESSION['csrf_token'],
             'values' => $values,
             'integrationSettings' => $this->settingsService->currentSettings(),
+            'templates' => FormTemplateCatalog::all(),
         ], 'New form');
     }
 

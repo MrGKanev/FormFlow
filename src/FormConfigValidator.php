@@ -44,11 +44,14 @@ final class FormConfigValidator
             throw new InvalidArgumentException('Success redirect must be a valid http or https URL.');
         }
 
-        $captchaProvider = (string) ($input['captcha_provider'] ?? 'none');
+        $captchaProvider = isset($input['guided_create']) && !isset($input['captcha_enabled'])
+            ? 'none'
+            : (string) ($input['captcha_provider'] ?? 'none');
 
         self::assertCaptchaProvider($captchaProvider);
 
         $config = [
+            'name' => self::formName((string) ($input['form_name'] ?? $formId)),
             'recipient' => $recipient,
             'allowed_origins' => $allowedOrigins,
             'subject' => self::defaultSubject((string) ($input['subject'] ?? '')),
@@ -78,6 +81,8 @@ final class FormConfigValidator
         if ($blockedPatterns !== []) {
             $config['blocked_patterns'] = $blockedPatterns;
         }
+
+        $config['auto_reply'] = self::autoReplyFromAdminInput($input);
 
         return [$formId, $config];
     }
@@ -118,6 +123,7 @@ final class FormConfigValidator
 
         $rateLimit = is_array($config['rate_limit_per_ip'] ?? null) ? $config['rate_limit_per_ip'] : [];
         $normalized = [
+            'name' => self::formName((string) ($config['name'] ?? $formId)),
             'recipient' => $recipient,
             'allowed_origins' => $allowedOrigins,
             'subject' => self::defaultSubject((string) ($config['subject'] ?? '')),
@@ -150,7 +156,48 @@ final class FormConfigValidator
             $normalized['notification_overrides'] = $notificationOverrides;
         }
 
+        $normalized['auto_reply'] = self::autoReplyFromConfig($config['auto_reply'] ?? []);
+
         return $normalized;
+    }
+
+    /** @param array<string, mixed> $input @return array{enabled: bool, subject: string, body: string} */
+    private static function autoReplyFromAdminInput(array $input): array
+    {
+        return self::validateAutoReply(
+            isset($input['auto_reply_enabled']),
+            (string) ($input['auto_reply_subject'] ?? ''),
+            (string) ($input['auto_reply_body'] ?? '')
+        );
+    }
+
+    /** @return array{enabled: bool, subject: string, body: string} */
+    private static function autoReplyFromConfig(mixed $config): array
+    {
+        $config = is_array($config) ? $config : [];
+
+        return self::validateAutoReply(
+            !empty($config['enabled']),
+            (string) ($config['subject'] ?? ''),
+            (string) ($config['body'] ?? '')
+        );
+    }
+
+    /** @return array{enabled: bool, subject: string, body: string} */
+    private static function validateAutoReply(bool $enabled, string $subject, string $body): array
+    {
+        $subject = trim($subject);
+        $body = trim($body);
+
+        if (mb_strlen($subject) > 180 || mb_strlen($body) > 10000) {
+            throw new InvalidArgumentException('Auto-reply subject or message is too long.');
+        }
+
+        if ($enabled && ($subject === '' || $body === '')) {
+            throw new InvalidArgumentException('Auto-reply subject and message are required when auto-reply is enabled.');
+        }
+
+        return ['enabled' => $enabled, 'subject' => $subject, 'body' => $body];
     }
 
     /** @return array<string, mixed> */
@@ -164,6 +211,9 @@ final class FormConfigValidator
         self::assertAllowedExtensions($allowedExtensions);
 
         return [
+            'enabled' => isset($input['guided_create']) || isset($input['uploads_controlled'])
+                ? isset($input['uploads_enabled'])
+                : true,
             'max_file_size_mb' => min(100, max(1, (int) ($input['upload_max_file_size_mb'] ?? 10))),
             'max_files' => min(20, max(1, (int) ($input['upload_max_files'] ?? 3))),
             'allowed_extensions' => array_values(array_unique($allowedExtensions)),
@@ -182,6 +232,7 @@ final class FormConfigValidator
         self::assertAllowedExtensions($allowedExtensions);
 
         return [
+            'enabled' => array_key_exists('enabled', $uploads) ? !empty($uploads['enabled']) : true,
             'max_file_size_mb' => min(100, max(1, (int) ($uploads['max_file_size_mb'] ?? 10))),
             'max_files' => min(20, max(1, (int) ($uploads['max_files'] ?? 3))),
             'allowed_extensions' => array_values(array_unique($allowedExtensions)),
@@ -285,6 +336,13 @@ final class FormConfigValidator
         $subject = trim($subject);
 
         return $subject !== '' ? $subject : 'New form submission';
+    }
+
+    private static function formName(string $name): string
+    {
+        $name = trim($name);
+
+        return mb_substr($name !== '' ? $name : 'Untitled form', 0, 120);
     }
 
     /** @return list<string> */

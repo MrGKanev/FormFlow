@@ -35,7 +35,12 @@ $globalStatus = static fn (string $key): string => (string) ($integrationSetting
 
 <form method="POST" action="/admin/forms/<?= rawurlencode($formId) ?>/edit">
     <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+    <input type="hidden" name="uploads_controlled" value="1">
     <div class="form-grid">
+        <label>
+            <span>Form name</span>
+            <input type="text" name="form_name" value="<?= $value('form_name', $formId) ?>" required maxlength="120">
+        </label>
         <label>
             <span>Recipient email</span>
             <input type="email" name="recipient" value="<?= $value('recipient') ?>" required>
@@ -86,6 +91,10 @@ $globalStatus = static fn (string $key): string => (string) ($integrationSetting
             <span>Max upload size (MB)</span>
             <input type="number" name="upload_max_file_size_mb" min="1" max="100" value="<?= $value('upload_max_file_size_mb', '10') ?>">
         </label>
+        <label class="checkbox-label">
+            <input type="checkbox" name="uploads_enabled" value="1"<?= !empty($values['uploads_enabled']) ? ' checked' : '' ?>>
+            <span>Accept file uploads</span>
+        </label>
         <label>
             <span>Max uploaded files</span>
             <input type="number" name="upload_max_files" min="1" max="20" value="<?= $value('upload_max_files', '3') ?>">
@@ -104,6 +113,18 @@ $globalStatus = static fn (string $key): string => (string) ($integrationSetting
                         <span><?= $label ?></span>
                     </label>
                 <?php endforeach; ?>
+            </div>
+        </fieldset>
+        <fieldset class="field-picker span-2 auto-reply-fields">
+            <legend>Automatic reply</legend>
+            <p class="muted">Sent when the payload contains a valid <code>email</code> field. Available placeholders include <code>{{name}}</code>, <code>{{email}}</code>, and <code>{{form_id}}</code>.</p>
+            <label class="checkbox-label option-check auto-reply-toggle">
+                <input type="checkbox" name="auto_reply_enabled" value="1"<?= !empty($values['auto_reply_enabled']) ? ' checked' : '' ?>>
+                <span>Enable automatic reply</span>
+            </label>
+            <div class="form-grid">
+                <label class="span-2"><span>Reply subject</span><input type="text" name="auto_reply_subject" maxlength="180" value="<?= $value('auto_reply_subject') ?>"></label>
+                <label class="span-2"><span>Reply message</span><textarea name="auto_reply_body" rows="6"><?= $value('auto_reply_body') ?></textarea></label>
             </div>
         </fieldset>
         <fieldset class="field-picker span-2">
