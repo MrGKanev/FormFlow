@@ -48,7 +48,7 @@
                         <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                         <input type="hidden" name="action" value="delete">
                         <input type="hidden" name="id" value="<?= (int) $user['id'] ?>">
-                        <button type="submit" class="secondary">Delete</button>
+                        <button type="submit" class="danger-button" data-confirm="Delete this admin user?">Delete</button>
                     </form>
                 </li>
             <?php endforeach; ?>

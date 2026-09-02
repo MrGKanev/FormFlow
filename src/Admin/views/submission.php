@@ -49,7 +49,7 @@ $statusClass = 'status-' . preg_replace('/[^a-z0-9_-]+/i', '-', strtolower($subm
         <form method="POST" action="/admin/submissions/<?= (int) $submission['id'] ?>/action" class="inline">
             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
             <input type="hidden" name="action" value="delete">
-            <button type="submit" class="secondary">Delete</button>
+            <button type="submit" class="danger-button" data-confirm="Delete this submission? This cannot be undone.">Delete</button>
         </form>
     </div>
 </div>

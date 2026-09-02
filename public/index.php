@@ -2,6 +2,22 @@
 
 declare(strict_types=1);
 
+if (PHP_SAPI === 'cli-server') {
+    $requestPath = rawurldecode((string) (parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/'));
+    $publicRoot = realpath(__DIR__);
+    $staticFile = realpath(__DIR__ . $requestPath);
+
+    if (
+        $requestPath !== '/'
+        && $publicRoot !== false
+        && $staticFile !== false
+        && is_file($staticFile)
+        && str_starts_with($staticFile, $publicRoot . DIRECTORY_SEPARATOR)
+    ) {
+        return false;
+    }
+}
+
 use formflow\AppFactory;
 use formflow\AppRouter;
 use formflow\HttpsDetector;

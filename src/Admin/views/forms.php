@@ -85,21 +85,23 @@ $captchaSnippet = static function (string $provider, string $siteKey): array {
                 . '  <button type="submit">Send</button>' . PHP_EOL
                 . '</form>' . $captchaScript;
             ?>
-            <li>
-                <strong><?= htmlspecialchars($formId, ENT_QUOTES, 'UTF-8') ?></strong>
+            <?php $snippetId = 'snippet-' . preg_replace('/[^a-z0-9_-]+/i', '-', (string) $formId); ?>
+            <li class="form-card">
+                <strong><?= htmlspecialchars((string) ($config['name'] ?? $formId), ENT_QUOTES, 'UTF-8') ?></strong>
                 <span><?= htmlspecialchars((string) ($config['recipient'] ?? ''), ENT_QUOTES, 'UTF-8') ?></span>
                 <code>/<?= htmlspecialchars($formId, ENT_QUOTES, 'UTF-8') ?></code>
                 <span><?= $apiKey !== '' || !empty($config['require_api_key']) ? 'API key required' : 'API key optional' ?></span>
                 <span>CAPTCHA: <?= htmlspecialchars($provider, ENT_QUOTES, 'UTF-8') ?></span>
                 <span>Allowed origins: <?= $allowedOriginCount ?></span>
                 <span>Rate limit: <?= htmlspecialchars($rateLimitLabel, ENT_QUOTES, 'UTF-8') ?></span>
-                <textarea readonly rows="7"><?= htmlspecialchars($snippet, ENT_QUOTES, 'UTF-8') ?></textarea>
+                <textarea id="<?= htmlspecialchars($snippetId, ENT_QUOTES, 'UTF-8') ?>" readonly rows="7"><?= htmlspecialchars($snippet, ENT_QUOTES, 'UTF-8') ?></textarea>
                 <span class="form-actions">
+                    <button type="button" class="secondary compact" data-copy-target="<?= htmlspecialchars($snippetId, ENT_QUOTES, 'UTF-8') ?>">Copy snippet</button>
                     <a class="button secondary compact" href="/admin/forms/<?= rawurlencode((string) $formId) ?>/edit">Edit</a>
                     <?php if (in_array((string) $formId, $dynamicFormIds, true)): ?>
                         <form method="POST" action="/admin/forms/<?= rawurlencode((string) $formId) ?>/delete" class="inline">
                             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
-                            <button type="submit" class="secondary">Delete</button>
+                            <button type="submit" class="danger-button" data-confirm="Delete this form endpoint? Existing submissions will remain.">Delete</button>
                         </form>
                     <?php endif; ?>
                 </span>

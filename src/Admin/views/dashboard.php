@@ -61,6 +61,9 @@ $exportQuery = http_build_query([
         <h1>Submissions</h1>
         <p class="page-meta">Review incoming form activity and delivery state.</p>
     </div>
+    <div class="header-actions">
+        <a href="/admin/forms/new" class="button">New form</a>
+    </div>
 </div>
 
 <div class="dashboard-summary">
@@ -81,7 +84,7 @@ $exportQuery = http_build_query([
 <form method="GET" action="/admin" class="filter-form">
     <label>
         <span>Search</span>
-        <input type="search" name="q" placeholder="email, name, message, error" value="<?= htmlspecialchars((string) $search, ENT_QUOTES, 'UTF-8') ?>">
+        <span class="search-field"><input type="search" name="q" placeholder="email, name, message, error" value="<?= htmlspecialchars((string) $search, ENT_QUOTES, 'UTF-8') ?>"><kbd>/</kbd></span>
     </label>
     <label>
         <span>Form ID</span>
@@ -120,6 +123,17 @@ $exportQuery = http_build_query([
     </div>
 </form>
 
+<section class="saved-filters" data-saved-filters>
+    <div class="saved-filter-head">
+        <div><strong>Saved views</strong><span>Keep frequently used filter combinations in this browser.</span></div>
+        <div class="saved-filter-create">
+            <input type="text" data-filter-name maxlength="40" placeholder="View name" aria-label="Saved view name">
+            <button type="button" class="secondary compact" data-save-filter>Save current view</button>
+        </div>
+    </div>
+    <div class="saved-filter-list" data-filter-list><span class="muted" data-filter-empty>No saved views yet.</span></div>
+</section>
+
 <?php if ($analytics !== []): ?>
 <section class="panel">
     <div class="section-heading">
@@ -149,7 +163,7 @@ $exportQuery = http_build_query([
 </section>
 <?php endif; ?>
 
-<form method="POST" action="/admin/submissions/bulk" class="utility-form">
+<form method="POST" action="/admin/submissions/bulk" class="utility-form" data-confirm-action="delete">
 <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
 <div class="table-wrap submissions-table">
     <div class="table-toolbar">
@@ -166,14 +180,14 @@ $exportQuery = http_build_query([
     </div>
     <table>
         <thead>
-            <tr><th><span class="muted">Select</span></th><th>ID</th><th>Form</th><th>Status</th><th>Created</th><th>Action</th></tr>
+            <tr><th><input type="checkbox" data-select-all aria-label="Select all submissions"></th><th>ID</th><th>Form</th><th>Status</th><th>Created</th><th>Action</th></tr>
         </thead>
         <tbody>
             <?php foreach ($submissions as $submission): ?>
                 <?php $submissionStatus = (string) $submission['status']; ?>
                 <?php $detailUrl = '/admin/submissions/' . (int) $submission['id']; ?>
                 <tr>
-                    <td><input type="checkbox" name="submission_ids[]" value="<?= (int) $submission['id'] ?>"></td>
+                    <td><input type="checkbox" data-row-select name="submission_ids[]" value="<?= (int) $submission['id'] ?>" aria-label="Select submission <?= (int) $submission['id'] ?>"></td>
                     <td><a class="row-link" href="<?= $detailUrl ?>">#<?= (int) $submission['id'] ?></a></td>
                     <td><?= htmlspecialchars((string) $submission['form_id'], ENT_QUOTES, 'UTF-8') ?></td>
                     <td><span class="status-pill <?= htmlspecialchars($statusClass($submissionStatus), ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($submissionStatus, ENT_QUOTES, 'UTF-8') ?></span></td>

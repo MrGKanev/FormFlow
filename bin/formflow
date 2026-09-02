@@ -4,6 +4,7 @@
 declare(strict_types=1);
 
 use formflow\CurlWebhookTransport;
+use formflow\AppVersion;
 use formflow\MailDeliveryWorker;
 use formflow\MailService;
 use formflow\SqliteFormRepository;
@@ -91,6 +92,7 @@ function cliOption(array $argv, string $name, string $default): string
 function cliUsage(): void
 {
     fwrite(STDERR, "Usage:\n");
+    fwrite(STDERR, "  php bin/formflow --version\n");
     fwrite(STDERR, "  php bin/formflow retention:prune [--days=180]\n");
     fwrite(STDERR, "  php bin/formflow mail:work [--limit=100]\n");
     fwrite(STDERR, "  php bin/formflow mail:retry-failed [--limit=100]\n");
@@ -99,6 +101,11 @@ function cliUsage(): void
 
 $command = $argv[1] ?? '';
 $databasePath = cliDatabasePath($root);
+
+if ($command === '--version' || $command === 'version') {
+    echo 'formflow ' . AppVersion::CURRENT . PHP_EOL;
+    exit(0);
+}
 
 if ($command === 'retention:prune') {
     $days = max(1, (int) cliOption($argv, 'days', (string) (getenv('RETENTION_DAYS') ?: '180')));
