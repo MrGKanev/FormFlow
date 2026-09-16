@@ -265,8 +265,30 @@ final class AdminSubmissionController
         $formId = trim((string) ($_GET['form_id'] ?? ''));
         $formId = $formId !== '' ? $formId : null;
 
+        $analytics = $this->submissions->analyticsOverview($days, $formId);
+        if (($_GET['format'] ?? '') === 'csv') {
+            $csv = fopen('php://temp', 'r+');
+            if ($csv === false) {
+                return $this->htmlResponse(500, 'Unable to export CSV.');
+            }
+            fputcsv($csv, ['form_id', 'total', 'accepted', 'unique_emails', 'sent'], ',', '"', '');
+            foreach ($analytics['forms'] as $row) {
+                fputcsv($csv, array_map($this->csvSafeCell(...), [
+                    $row['form_id'], $row['total'], $row['accepted'], $row['unique_emails'], $row['sent'],
+                ]), ',', '"', '');
+            }
+            rewind($csv);
+            $body = (string) stream_get_contents($csv);
+            fclose($csv);
+            $this->recordAudit('analytics.export', 'Exported analytics for the last ' . $days . ' days.');
+            return ['status' => 200, 'body' => $body, 'redirect' => null, 'headers' => [
+                'Content-Type' => 'text/csv; charset=utf-8',
+                'Content-Disposition' => 'attachment; filename="formflow-analytics.csv"',
+            ]];
+        }
+
         return $this->htmlResponse(200, $this->renderer->render('analytics', [
-            'analytics' => $this->submissions->analyticsOverview($days, $formId),
+            'analytics' => $analytics,
             'days' => $days,
             'formId' => $formId,
             'forms' => array_keys($this->forms),

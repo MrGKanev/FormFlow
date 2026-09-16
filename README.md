@@ -257,3 +257,34 @@ If you want a more feature-rich solution, consider:
 
 - [Web3Forms](https://web3forms.com/) - hosted, free tier, more features.
 - [Formspree](https://formspree.io/) - hosted, free tier, more features.
+
+### Signup and submission counts
+
+In **Admin → Analytics**, select a form and the last 7, 30, or 90 calendar days
+(UTC), then apply the filters or choose **Export CSV**. The per-form table and CSV
+include total submissions, accepted submissions (blocked spam/honeypot excluded),
+unique emails, and sent notification emails.
+
+Unique emails are deduplicated after trimming whitespace and lowercasing the
+payload's `email` field. Missing or empty emails are excluded; repeated submissions
+still count toward submission totals. Overall unique emails are deduplicated across
+forms, so per-form unique counts need not sum to the overall count. Newsletter
+counts represent signups, not verified or currently active subscriptions. Deleted
+or expired submissions are not counted.
+
+For server-to-server access, set `ANALYTICS_API_TOKEN` in `.env` to a random secret
+(for example, generate one with `php -r 'echo bin2hex(random_bytes(32)), PHP_EOL;'`).
+An empty token disables access. This token can read aggregate counts for all forms;
+keep it on your server and use HTTPS.
+
+```sh
+curl 'https://forms.example.com/api/analytics?form_id=newsletter&days=30' \
+  -H "Authorization: Bearer $ANALYTICS_API_TOKEN"
+```
+
+The read-only GET endpoint returns `days`, `form_id`, and `analytics` containing
+`summary`, `trend`, `statuses`, and `forms`. Summary counters include `total`,
+`accepted`, `unique_emails`, `sent`, `failed`, `blocked`, and `delivery_rate`.
+Omit `form_id` for all forms. Invalid filters return 422, missing/invalid tokens
+return 401, and authenticated non-GET requests return 405. No individual email
+addresses or submission payloads are returned.

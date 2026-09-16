@@ -1,5 +1,5 @@
 <?php
-/** @var array{summary: array<string, int|float>, trend: list<array{date: string, total: int}>, statuses: list<array{status: string, total: int}>, forms: list<array{form_id: string, total: int}>} $analytics */
+/** @var array{summary: array<string, int|float>, trend: list<array{date: string, total: int}>, statuses: list<array{status: string, total: int}>, forms: list<array{form_id: string, total: int, accepted: int, unique_emails: int, sent: int}>} $analytics */
 /** @var int $days */
 /** @var string|null $formId */
 /** @var list<string> $forms */
@@ -28,10 +28,13 @@ $maxForm = $formTotals === [] ? 1 : max(1, max($formTotals));
             <?php endforeach; ?>
         </select></label>
         <button type="submit" class="secondary">Apply</button>
+        <button type="submit" name="format" value="csv" class="secondary">Export CSV</button>
     </form>
 </div>
 
 <div class="analytics-kpis">
+    <article class="metric-card"><span>Unique emails</span><strong><?= number_format((int) $summary['unique_emails']) ?></strong><small>Accepted submissions, deduplicated by email</small></article>
+    <article class="metric-card"><span>Accepted submissions</span><strong><?= number_format((int) $summary['accepted']) ?></strong><small>Blocked submissions excluded</small></article>
     <article class="metric-card"><span>Submissions</span><strong><?= number_format((int) $summary['total']) ?></strong><small>Last <?= $days ?> days</small></article>
     <article class="metric-card"><span>Delivery rate</span><strong><?= number_format((float) $summary['delivery_rate'], 1) ?>%</strong><small><?= number_format((int) $summary['sent']) ?> sent · blocked excluded</small></article>
     <article class="metric-card"><span>Failed</span><strong><?= number_format((int) $summary['failed']) ?></strong><small>Needs attention</small></article>
@@ -72,3 +75,18 @@ $maxForm = $formTotals === [] ? 1 : max(1, max($formTotals));
         </div>
     </section>
 </div>
+
+<section class="panel">
+    <h2>People and submissions by form</h2>
+    <p class="muted">Unique emails ignore case and surrounding spaces, exclude blocked submissions, and skip missing emails. Newsletter counts represent signups, not confirmed or active subscriptions. Sent means notification emails sent. Counts cover retained records in the selected period (UTC).</p>
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>Form</th><th>Submissions</th><th>Accepted</th><th>Unique emails</th><th>Sent</th></tr></thead>
+        <tbody>
+        <?php foreach ($analytics['forms'] as $row): ?>
+            <tr><td><?= htmlspecialchars($row['form_id'], ENT_QUOTES, 'UTF-8') ?></td><td><?= $row['total'] ?></td><td><?= $row['accepted'] ?></td><td><?= $row['unique_emails'] ?></td><td><?= $row['sent'] ?></td></tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    </div>
+</section>

@@ -299,8 +299,13 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
             $params['form_id'] = $formId;
         }
 
+        // Only accepted submissions identify people; missing emails are not identities.
+        $peopleSql = "COUNT(DISTINCT CASE WHEN status NOT LIKE 'blocked_%'
+            AND json_type(payload, '$.email') = 'text'
+            THEN NULLIF(lower(trim(json_extract(payload, '$.email'))), '') END)";
+        $acceptedSql = "SUM(CASE WHEN status NOT LIKE 'blocked_%' THEN 1 ELSE 0 END)";
         $summaryStatement = $this->pdo->prepare(
-            'SELECT COUNT(*) AS total,
+            'SELECT COUNT(*) AS total, ' . $peopleSql . ' AS unique_emails, ' . $acceptedSql . ' AS accepted,
                     SUM(CASE WHEN status = "sent" THEN 1 ELSE 0 END) AS sent,
                     SUM(CASE WHEN status = "failed" THEN 1 ELSE 0 END) AS failed,
                     SUM(CASE WHEN status LIKE "blocked_%" THEN 1 ELSE 0 END) AS blocked
@@ -343,18 +348,23 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         );
 
         $formStatement = $this->pdo->prepare(
-            'SELECT form_id, COUNT(*) AS total FROM submissions' . $where . '
-             GROUP BY form_id ORDER BY total DESC, form_id ASC LIMIT 8'
+            'SELECT form_id, COUNT(*) AS total, ' . $peopleSql . ' AS unique_emails, '
+                . $acceptedSql . ' AS accepted,
+                SUM(CASE WHEN status = "sent" THEN 1 ELSE 0 END) AS sent
+                FROM submissions' . $where . '
+             GROUP BY form_id ORDER BY total DESC, form_id ASC'
         );
         $formStatement->execute($params);
         $forms = array_map(
-            static fn (array $row): array => ['form_id' => (string) $row['form_id'], 'total' => (int) $row['total']],
+            static fn (array $row): array => ['form_id' => (string) $row['form_id'], 'total' => (int) $row['total'], 'accepted' => (int) $row['accepted'], 'unique_emails' => (int) $row['unique_emails'], 'sent' => (int) $row['sent']],
             $formStatement->fetchAll()
         );
 
         return [
             'summary' => [
                 'total' => $total,
+                'unique_emails' => (int) ($summaryRow['unique_emails'] ?? 0),
+                'accepted' => $deliverable,
                 'sent' => $sent,
                 'failed' => (int) ($summaryRow['failed'] ?? 0),
                 'blocked' => $blocked,

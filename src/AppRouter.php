@@ -47,6 +47,24 @@ final class AppRouter
             return;
         }
 
+        if ($formId === 'api/analytics') {
+            $controller = new AnalyticsApiController(
+                new SqliteSubmissionRepository($this->factory->databasePath()),
+                (string) (getenv('ANALYTICS_API_TOKEN') ?: '')
+            );
+            $response = $controller->handle(
+                (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'),
+                (string) ($_SERVER['HTTP_AUTHORIZATION'] ?? ''),
+                $_GET
+            );
+            http_response_code($response->status);
+            foreach ($response->headers as $name => $value) {
+                header($name . ': ' . $value);
+            }
+            echo json_encode($response->body, JSON_THROW_ON_ERROR);
+            return;
+        }
+
         $clientIp = $this->factory->clientIp($this->security);
 
         if ($formId === 'admin' || str_starts_with($formId, 'admin/')) {

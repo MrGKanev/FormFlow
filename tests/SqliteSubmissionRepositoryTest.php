@@ -293,6 +293,33 @@ final class SqliteSubmissionRepositoryTest extends TestCase
         $this->assertSame('received', $rows[0]['status']);
     }
 
+    public function testPeopleCountsRespectPeriodAndIncludeEveryForm(): void
+    {
+        $database = tempnam(sys_get_temp_dir(), 'formflow-counts-');
+        try {
+            $repository = new SqliteSubmissionRepository($database);
+            $oldId = $repository->create('old', ['email' => 'old@example.com'], null);
+            $pdo = new PDO('sqlite:' . $database);
+            $statement = $pdo->prepare('UPDATE submissions SET created_at = :date WHERE id = :id');
+            $statement->execute(['date' => gmdate('c', time() - 15 * 86400), 'id' => $oldId]);
+            for ($i = 0; $i < 10; $i++) {
+                $repository->create('form-' . $i, ['email' => 'shared@example.com'], null);
+            }
+            $week = $repository->analyticsOverview(7);
+            $this->assertCount(10, $week['forms']);
+            $this->assertSame(1, $week['summary']['unique_emails']);
+            $this->assertSame(10, array_sum(array_column($week['forms'], 'unique_emails')));
+            $this->assertSame(2, $repository->analyticsOverview(30)['summary']['unique_emails']);
+        } finally {
+            unset($statement, $pdo, $repository);
+            foreach ([$database, $database . '-wal', $database . '-shm'] as $file) {
+                if (is_file($file)) {
+                    unlink($file);
+                }
+            }
+        }
+    }
+
     public function testAnalyticsOverviewReturnsReconciledMetricsAndDailyTrend(): void
     {
         $repository = new SqliteSubmissionRepository(':memory:');

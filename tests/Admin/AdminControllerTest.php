@@ -1277,7 +1277,27 @@ final class AdminControllerTest extends TestCase
         $this->assertSame(200, $result['status']);
         $this->assertStringContainsString('<h1>Analytics</h1>', $result['body']);
         $this->assertStringContainsString('Delivery rate', $result['body']);
+        $this->assertStringContainsString('Unique emails', $result['body']);
+        $this->assertStringContainsString('Export CSV', $result['body']);
+        $this->assertStringContainsString('People and submissions by form', $result['body']);
         $this->assertStringContainsString('100.0%', $result['body']);
+    }
+
+    public function testAnalyticsCsvExportsFilteredCounts(): void
+    {
+        $submissions = new SqliteSubmissionRepository(':memory:');
+        $submissions->create('newsletter', ['email' => 'ada@example.com'], null, 'sent');
+        $submissions->create('newsletter', ['email' => 'ADA@example.com'], null);
+        $submissions->create('contact', ['email' => 'other@example.com'], null);
+        $controller = $this->makeController(['203.0.113.10'], $submissions);
+        $this->login($controller);
+        $_GET = ['days' => '7', 'form_id' => 'newsletter', 'format' => 'csv'];
+        $result = $controller->handle('admin/analytics');
+        $this->assertSame(200, $result['status']);
+        $this->assertSame('text/csv; charset=utf-8', $result['headers']['Content-Type']);
+        $this->assertStringContainsString("newsletter,2,2,1,1", $result['body']);
+        $this->assertStringNotContainsString('contact', $result['body']);
+        $this->assertStringNotContainsString('@example.com', $result['body']);
     }
 
     public function testAnalyticsPageRendersEmptyStateWithoutSubmissions(): void
