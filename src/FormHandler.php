@@ -43,6 +43,11 @@ final class FormHandler
 
         $ipHash = $this->ipHash($this->clientIp());
 
+        // The API key gate runs before any rate-limit accounting: unauthenticated
+        // requests are rejected on a cheap comparison and must not be able to burn
+        // through the per-IP or (shared, form-wide) daily submission budget.
+        $this->assertApiKey($formId, !empty($config['require_api_key']));
+
         $this->rateLimiter->hit($formId, $ipHash);
 
         $perIpLimit = array_merge(
@@ -66,8 +71,6 @@ final class FormHandler
         if ($todayHits > $dailyLimit) {
             return HttpResponse::json(429, ['success' => false, 'message' => 'Daily submission limit reached for this form.']);
         }
-
-        $this->assertApiKey($formId, !empty($config['require_api_key']));
 
         if (!empty($_POST['_website'])) {
             try {

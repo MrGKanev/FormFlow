@@ -19,7 +19,7 @@ final class WebhookDeliveryWorkerTest extends TestCase
 
         $summary = (new WebhookDeliveryWorker($deliveries, $transport))->process();
 
-        $this->assertSame(['attempted' => 1, 'sent' => 1, 'failed' => 0, 'pending' => 0], $summary);
+        $this->assertSame(['attempted' => 1, 'sent' => 1, 'failed' => 0, 'pending' => 0, 'skipped' => 0], $summary);
         $this->assertSame('sent', $deliveries->deliveryLog()[0]['status']);
         $this->assertSame(1, $deliveries->deliveryLog()[0]['attempts']);
     }
@@ -33,7 +33,7 @@ final class WebhookDeliveryWorkerTest extends TestCase
         $summary = (new WebhookDeliveryWorker($deliveries, $transport))->process();
         $entry = $deliveries->deliveryLog()[0];
 
-        $this->assertSame(['attempted' => 1, 'sent' => 0, 'failed' => 0, 'pending' => 1], $summary);
+        $this->assertSame(['attempted' => 1, 'sent' => 0, 'failed' => 0, 'pending' => 1, 'skipped' => 0], $summary);
         $this->assertSame('pending', $entry['status']);
         $this->assertSame(1, $entry['attempts']);
         $this->assertSame('HTTP 500.', $entry['error_message']);
@@ -50,7 +50,7 @@ final class WebhookDeliveryWorkerTest extends TestCase
         $summary = (new WebhookDeliveryWorker($deliveries, $transport))->process();
         $entry = $deliveries->deliveryLog()[0];
 
-        $this->assertSame(['attempted' => 1, 'sent' => 0, 'failed' => 1, 'pending' => 0], $summary);
+        $this->assertSame(['attempted' => 1, 'sent' => 0, 'failed' => 1, 'pending' => 0, 'skipped' => 0], $summary);
         $this->assertSame('failed', $entry['status']);
         $this->assertSame(3, $entry['attempts']);
         $this->assertSame('HTTP 500.', $entry['error_message']);
@@ -69,10 +69,45 @@ final class WebhookDeliveryWorkerTest extends TestCase
         $summary = (new WebhookDeliveryWorker($deliveries, $transport))->process();
         $entry = $deliveries->deliveryLog()[0];
 
-        $this->assertSame(['attempted' => 1, 'sent' => 0, 'failed' => 1, 'pending' => 0], $summary);
+        $this->assertSame(['attempted' => 1, 'sent' => 0, 'failed' => 1, 'pending' => 0, 'skipped' => 0], $summary);
         $this->assertSame('failed', $entry['status']);
         $this->assertSame('Stored webhook payload is invalid.', $entry['error_message']);
         $this->assertSame([], $transport->requests);
+    }
+
+    public function testConcurrentWorkerRunsDoNotDispatchTheSameDeliveryTwice(): void
+    {
+        $deliveries = new SqliteWebhookDeliveryRepository(':memory:');
+        $deliveries->enqueue('contact', 'slack', 'https://hooks.slack.test/incoming', ['text' => 'hello']);
+
+        // Simulate a second worker process claiming the row first (e.g. an
+        // overlapping cron run), before the first worker gets to dispatch it.
+        $id = (int) $deliveries->due()[0]['id'];
+        $this->assertTrue($deliveries->claim($id));
+
+        $transport = new FakeWebhookTransport([null]);
+        $summary = (new WebhookDeliveryWorker($deliveries, $transport))->process();
+
+        $this->assertSame(['attempted' => 0, 'sent' => 0, 'failed' => 0, 'pending' => 0, 'skipped' => 1], $summary);
+        $this->assertSame([], $transport->requests);
+        $this->assertSame('pending', $deliveries->deliveryLog()[0]['status']);
+    }
+
+    public function testAbandonedClaimCanBeReclaimedAfterItGoesStale(): void
+    {
+        $deliveries = new SqliteWebhookDeliveryRepository(':memory:');
+        $deliveries->enqueue('contact', 'slack', 'https://hooks.slack.test/incoming', ['text' => 'hello']);
+        $id = (int) $deliveries->due()[0]['id'];
+
+        $this->assertTrue($deliveries->claim($id));
+        $this->assertFalse($deliveries->claim($id));
+
+        // Back-date the claim to simulate a worker that crashed mid-delivery.
+        $this->pdo($deliveries)
+            ->prepare('UPDATE webhook_deliveries SET locked_at = :locked_at WHERE id = :id')
+            ->execute(['locked_at' => gmdate('c', time() - 3600), 'id' => $id]);
+
+        $this->assertTrue($deliveries->claim($id));
     }
 
     private function pdo(SqliteWebhookDeliveryRepository $repository): \PDO

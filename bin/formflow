@@ -148,11 +148,12 @@ if ($command === 'webhooks:retry') {
     ))->process((int) cliOption($argv, 'limit', '100'));
 
     echo sprintf(
-        "Webhook retry attempted=%d sent=%d failed=%d pending=%d\n",
+        "Webhook retry attempted=%d sent=%d failed=%d pending=%d skipped=%d\n",
         $summary['attempted'],
         $summary['sent'],
         $summary['failed'],
-        $summary['pending']
+        $summary['pending'],
+        $summary['skipped']
     );
     cliRecordWorkerRun($root, 'webhooks');
     exit($summary['failed'] > 0 ? 1 : 0);

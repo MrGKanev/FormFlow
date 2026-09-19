@@ -9,39 +9,52 @@ final class WebhookUrlPolicy
     /** @param callable(string): list<string>|null $resolver */
     public static function validate(string $url, ?callable $resolver = null): ?string
     {
+        return self::resolve($url, $resolver)['error'];
+    }
+
+    /**
+     * Validates the URL and returns the exact IPs that were checked, so callers can
+     * pin the outbound connection to them (avoiding a DNS-rebinding gap between
+     * validation and the actual request).
+     *
+     * @param callable(string): list<string>|null $resolver
+     * @return array{error: ?string, ips: list<string>}
+     */
+    public static function resolve(string $url, ?callable $resolver = null): array
+    {
         if (!filter_var($url, FILTER_VALIDATE_URL)) {
-            return 'Webhook URL is invalid.';
+            return ['error' => 'Webhook URL is invalid.', 'ips' => []];
         }
 
         $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
 
         if (!in_array($scheme, ['http', 'https'], true)) {
-            return 'Webhook URL must use http or https.';
+            return ['error' => 'Webhook URL must use http or https.', 'ips' => []];
         }
 
         if (parse_url($url, PHP_URL_USER) !== null || parse_url($url, PHP_URL_PASS) !== null) {
-            return 'Webhook URL must not include credentials.';
+            return ['error' => 'Webhook URL must not include credentials.', 'ips' => []];
         }
 
         $host = strtolower((string) parse_url($url, PHP_URL_HOST));
 
         if ($host === '' || $host === 'localhost' || str_ends_with($host, '.localhost')) {
-            return 'Webhook destination is not allowed.';
+            return ['error' => 'Webhook destination is not allowed.', 'ips' => []];
         }
 
         $ips = self::resolveHost($host, $resolver);
 
         if ($ips === []) {
-            return 'Webhook destination could not be resolved.';
+            return ['error' => 'Webhook destination could not be resolved.', 'ips' => []];
         }
 
         foreach ($ips as $ip) {
             if (!self::isPublicIp($ip)) {
-                return 'Webhook destination is not allowed.';
+                return ['error' => 'Webhook destination is not allowed.', 'ips' => []];
             }
         }
 
-        return null;
+        return ['error' => null, 'ips' => $ips];
     }
 
     /** @param callable(string): list<string>|null $resolver @return list<string> */

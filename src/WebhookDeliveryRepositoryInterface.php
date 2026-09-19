@@ -22,6 +22,14 @@ interface WebhookDeliveryRepositoryInterface
     /** @return list<array<string, mixed>> */
     public function due(int $limit = 100): array;
 
+    /**
+     * Atomically claims a pending delivery so two concurrently-running workers
+     * can't both dispatch the same webhook. Returns false if another worker
+     * already holds a fresh claim on it (a claim older than $staleAfterSeconds
+     * is treated as abandoned, e.g. by a crashed worker, and can be re-claimed).
+     */
+    public function claim(int $id, int $staleAfterSeconds = 900): bool;
+
     public function markQueuedSent(int $id, int $attempts): void;
 
     public function markQueuedFailed(int $id, int $attempts, string $errorMessage, ?int $retryAfterSeconds = null): void;

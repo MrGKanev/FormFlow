@@ -90,6 +90,41 @@ final class MailDeliveryWorkerTest extends TestCase
         $this->assertSame([], $mail->sentMessages);
     }
 
+    public function testConcurrentWorkerRunsDoNotSendTheSamePendingMailTwice(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $id = $repository->create('contact', ['email' => 'ada@example.com'], null, 'pending_mail');
+        $mail = new FakeMailSender();
+
+        // Simulate a second worker process claiming the row first (e.g. an
+        // overlapping cron run), before this worker gets to send it.
+        $this->assertTrue($repository->claim($id, 'pending_mail'));
+
+        $summary = (new MailDeliveryWorker([
+            'contact' => ['recipient' => 'owner@example.com'],
+        ], $mail, $repository))->process();
+
+        $this->assertSame(['attempted' => 0, 'sent' => 0, 'failed' => 0, 'skipped' => 1], $summary);
+        $this->assertSame([], $mail->sentMessages);
+        $this->assertSame('pending_mail', $repository->find($id)['status']);
+    }
+
+    public function testAbandonedClaimCanBeReclaimedAfterItGoesStale(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $id = $repository->create('contact', ['email' => 'ada@example.com'], null, 'pending_mail');
+
+        $this->assertTrue($repository->claim($id, 'pending_mail'));
+        $this->assertFalse($repository->claim($id, 'pending_mail'));
+
+        // Back-date the claim to simulate a worker that crashed mid-delivery.
+        (new \ReflectionProperty($repository, 'pdo'))->getValue($repository)
+            ->prepare('UPDATE submissions SET locked_at = :locked_at WHERE id = :id')
+            ->execute(['locked_at' => gmdate('c', time() - 3600), 'id' => $id]);
+
+        $this->assertTrue($repository->claim($id, 'pending_mail'));
+    }
+
     public function testQueuedDeliveryAlsoSendsConfiguredAutoReply(): void
     {
         $repository = new SqliteSubmissionRepository(':memory:');

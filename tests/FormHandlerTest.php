@@ -901,4 +901,57 @@ final class FormHandlerTest extends TestCase
 
         $this->assertSame(429, $result['status']);
     }
+
+    public function testInvalidApiKeyAttemptsDoNotConsumeTheSharedDailyLimit(): void
+    {
+        $apiKeys = new SqliteFormApiKeyRepository(':memory:');
+        $correctKey = $apiKeys->regenerate('contact');
+
+        $rateLimiter = new SqliteRateLimiter(':memory:');
+        $form = $this->contactForm([
+            'require_api_key' => true,
+            'rate_limit_per_ip' => ['max' => 1000, 'window_minutes' => 10],
+            'daily_limit' => 1,
+        ]);
+
+        $handler = $this->makeHandler(
+            ['contact' => $form],
+            null,
+            new FakeTurnstileVerifier(true),
+            new SqliteSubmissionRepository(':memory:'),
+            $rateLimiter,
+            $apiKeys
+        );
+
+        // A flood of requests with a wrong/missing API key must be rejected on the
+        // cheap key comparison alone, without ever touching the shared daily quota.
+        for ($i = 0; $i < 5; $i++) {
+            $_POST = [
+                'name' => 'Bot',
+                'email' => 'bot@example.com',
+                'message' => 'Hello',
+                '_key' => 'wrong-key',
+                'cf-turnstile-response' => 'good-token',
+            ];
+
+            try {
+                $handler->handle('contact');
+                $this->fail('Expected an InvalidArgumentException for a wrong API key.');
+            } catch (InvalidArgumentException $exception) {
+                $this->assertSame('Invalid API key.', $exception->getMessage());
+            }
+        }
+
+        $_POST = [
+            'name' => 'Ada',
+            'email' => 'ada@example.com',
+            'message' => 'Hello',
+            '_key' => $correctKey,
+            'cf-turnstile-response' => 'good-token',
+        ];
+
+        $result = $handler->handle('contact');
+
+        $this->assertSame(200, $result['status']);
+    }
 }

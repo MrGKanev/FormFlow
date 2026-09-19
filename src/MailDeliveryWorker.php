@@ -48,6 +48,15 @@ final class MailDeliveryWorker
                 continue;
             }
 
+            $submissionId = (int) $submission['id'];
+
+            // Atomic claim: if another (e.g. overlapping cron) worker run already
+            // grabbed this row, skip it instead of sending a duplicate email.
+            if (!$this->submissions->claim($submissionId, (string) $submission['status'])) {
+                $summary['skipped']++;
+                continue;
+            }
+
             $summary['attempted']++;
 
             try {
@@ -56,7 +65,7 @@ final class MailDeliveryWorker
                     (string) ($config['subject'] ?? 'New form submission'),
                     SubmissionPayloadFormatter::displayFields($payload)
                 );
-                $this->submissions->markSent((int) $submission['id']);
+                $this->submissions->markSent($submissionId);
 
                 try {
                     AutoReply::send($this->mailSender, $formId, $config, $payload);
@@ -64,7 +73,7 @@ final class MailDeliveryWorker
                 }
                 $summary['sent']++;
             } catch (Throwable $exception) {
-                $this->submissions->markFailed((int) $submission['id'], $exception->getMessage());
+                $this->submissions->markFailed($submissionId, $exception->getMessage());
                 $summary['failed']++;
             }
         }

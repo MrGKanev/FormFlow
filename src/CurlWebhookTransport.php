@@ -13,10 +13,10 @@ final class CurlWebhookTransport implements WebhookTransportInterface
 
     public function postJson(string $url, array $payload): ?string
     {
-        $policyError = WebhookUrlPolicy::validate($url, $this->resolver);
+        $policy = WebhookUrlPolicy::resolve($url, $this->resolver);
 
-        if ($policyError !== null) {
-            return $policyError;
+        if ($policy['error'] !== null) {
+            return $policy['error'];
         }
 
         $result = CurlHttpClient::post(
@@ -31,7 +31,8 @@ final class CurlWebhookTransport implements WebhookTransportInterface
             [
                 CURLOPT_FOLLOWLOCATION => false,
                 CURLOPT_MAXREDIRS => 0,
-            ]
+            ],
+            $policy['ips']
         );
 
         if ($result['body'] === false) {

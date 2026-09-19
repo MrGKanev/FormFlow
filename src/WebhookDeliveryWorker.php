@@ -14,12 +14,19 @@ final class WebhookDeliveryWorker
     ) {
     }
 
-    /** @return array{attempted: int, sent: int, failed: int, pending: int} */
+    /** @return array{attempted: int, sent: int, failed: int, pending: int, skipped: int} */
     public function process(int $limit = 100): array
     {
-        $summary = ['attempted' => 0, 'sent' => 0, 'failed' => 0, 'pending' => 0];
+        $summary = ['attempted' => 0, 'sent' => 0, 'failed' => 0, 'pending' => 0, 'skipped' => 0];
 
         foreach ($this->deliveries->due($limit) as $delivery) {
+            // Atomic claim: if another (e.g. overlapping cron) worker run already
+            // grabbed this row, skip it instead of dispatching a duplicate webhook.
+            if (!$this->deliveries->claim((int) $delivery['id'])) {
+                $summary['skipped']++;
+                continue;
+            }
+
             $summary['attempted']++;
             $attempts = ((int) $delivery['attempts']) + 1;
             $payload = json_decode((string) $delivery['payload_json'], true);

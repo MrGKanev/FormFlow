@@ -99,11 +99,31 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
         return $statement->fetchAll();
     }
 
+    public function claim(int $id, int $staleAfterSeconds = 900): bool
+    {
+        $statement = $this->pdo->prepare(
+            'UPDATE webhook_deliveries
+             SET locked_at = :now
+             WHERE id = :id
+               AND status = :status
+               AND (locked_at IS NULL OR locked_at < :stale_cutoff)'
+        );
+
+        $statement->execute([
+            'now' => Clock::nowIso(),
+            'id' => $id,
+            'status' => 'pending',
+            'stale_cutoff' => Clock::relativeIso(-max(0, $staleAfterSeconds)),
+        ]);
+
+        return $statement->rowCount() > 0;
+    }
+
     public function markQueuedSent(int $id, int $attempts): void
     {
         $statement = $this->pdo->prepare(
             'UPDATE webhook_deliveries
-             SET status = :status, attempts = :attempts, error_message = NULL, sent_at = :sent_at, next_attempt_at = NULL
+             SET status = :status, attempts = :attempts, error_message = NULL, sent_at = :sent_at, next_attempt_at = NULL, locked_at = NULL
              WHERE id = :id'
         );
         $statement->execute([
@@ -119,7 +139,7 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
         $status = $retryAfterSeconds === null ? 'failed' : 'pending';
         $statement = $this->pdo->prepare(
             'UPDATE webhook_deliveries
-             SET status = :status, attempts = :attempts, error_message = :error_message, next_attempt_at = :next_attempt_at
+             SET status = :status, attempts = :attempts, error_message = :error_message, next_attempt_at = :next_attempt_at, locked_at = NULL
              WHERE id = :id'
         );
         $statement->execute([
@@ -221,7 +241,7 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
         $columns = $this->pdo->query('PRAGMA table_info(webhook_deliveries)')->fetchAll();
         $columnNames = array_column($columns, 'name');
 
-        foreach (['url' => 'TEXT', 'payload_json' => 'TEXT', 'next_attempt_at' => 'TEXT'] as $column => $type) {
+        foreach (['url' => 'TEXT', 'payload_json' => 'TEXT', 'next_attempt_at' => 'TEXT', 'locked_at' => 'TEXT'] as $column => $type) {
             if (!in_array($column, $columnNames, true)) {
                 $this->pdo->exec('ALTER TABLE webhook_deliveries ADD COLUMN ' . $column . ' ' . $type);
             }

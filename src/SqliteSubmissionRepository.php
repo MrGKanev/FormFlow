@@ -62,11 +62,31 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         return (int) $this->pdo->lastInsertId();
     }
 
+    public function claim(int $submissionId, string $expectedStatus, int $staleAfterSeconds = 900): bool
+    {
+        $statement = $this->pdo->prepare(
+            'UPDATE submissions
+             SET locked_at = :now
+             WHERE id = :id
+               AND status = :expected_status
+               AND (locked_at IS NULL OR locked_at < :stale_cutoff)'
+        );
+
+        $statement->execute([
+            'now' => Clock::nowIso(),
+            'id' => $submissionId,
+            'expected_status' => $expectedStatus,
+            'stale_cutoff' => Clock::relativeIso(-max(0, $staleAfterSeconds)),
+        ]);
+
+        return $statement->rowCount() > 0;
+    }
+
     public function markSent(int $submissionId): void
     {
         $statement = $this->pdo->prepare(
             'UPDATE submissions
-             SET status = :status, sent_at = :sent_at, error_message = NULL
+             SET status = :status, sent_at = :sent_at, error_message = NULL, locked_at = NULL
              WHERE id = :id'
         );
 
@@ -81,7 +101,7 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
     {
         $statement = $this->pdo->prepare(
             'UPDATE submissions
-             SET status = :status, error_message = :error_message
+             SET status = :status, error_message = :error_message, locked_at = NULL
              WHERE id = :id'
         );
 
@@ -536,6 +556,10 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
 
         if (!in_array('reviewed_at', $columnNames, true)) {
             $this->pdo->exec('ALTER TABLE submissions ADD COLUMN reviewed_at TEXT');
+        }
+
+        if (!in_array('locked_at', $columnNames, true)) {
+            $this->pdo->exec('ALTER TABLE submissions ADD COLUMN locked_at TEXT');
         }
 
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_submissions_form_id ON submissions(form_id)');

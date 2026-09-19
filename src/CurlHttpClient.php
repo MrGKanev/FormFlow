@@ -10,6 +10,10 @@ final class CurlHttpClient
     /**
      * @param list<string> $headers
      * @param array<int, mixed> $options
+     * @param list<string> $pinnedIps When non-empty, the connection is pinned to these
+     *     already-validated IPs via CURLOPT_RESOLVE instead of letting cURL re-resolve
+     *     the host at request time (closes the DNS-rebinding gap between an SSRF check
+     *     done against the hostname and the actual outbound connection).
      * @return array{statusCode: int, body: string|false, error: string}
      */
     public static function post(
@@ -18,7 +22,8 @@ final class CurlHttpClient
         array $headers,
         int $timeoutSeconds,
         int $connectTimeoutSeconds,
-        array $options = []
+        array $options = [],
+        array $pinnedIps = []
     ): array {
         if (!function_exists('curl_init')) {
             return ['statusCode' => 0, 'body' => false, 'error' => 'cURL is unavailable.'];
@@ -43,6 +48,14 @@ final class CurlHttpClient
             CURLOPT_USERAGENT => 'formflow/1.0',
         ];
 
+        if ($pinnedIps !== []) {
+            $resolveEntry = self::buildResolveEntry($url, $pinnedIps);
+
+            if ($resolveEntry !== null) {
+                $curlOptions[CURLOPT_RESOLVE] = [$resolveEntry];
+            }
+        }
+
         if (defined('CURLOPT_PROTOCOLS_STR') && defined('CURLOPT_REDIR_PROTOCOLS_STR')) {
             $curlOptions[CURLOPT_PROTOCOLS_STR] = 'http,https';
             $curlOptions[CURLOPT_REDIR_PROTOCOLS_STR] = 'http,https';
@@ -66,5 +79,24 @@ final class CurlHttpClient
             'body' => $response,
             'error' => $error,
         ];
+    }
+
+    /** @param list<string> $ips @return string|null "host:port:ip[,ip...]" for CURLOPT_RESOLVE */
+    private static function buildResolveEntry(string $url, array $ips): ?string
+    {
+        $host = parse_url($url, PHP_URL_HOST);
+
+        if (!is_string($host) || $host === '') {
+            return null;
+        }
+
+        $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
+        $port = parse_url($url, PHP_URL_PORT);
+
+        if (!is_int($port)) {
+            $port = $scheme === 'https' ? 443 : 80;
+        }
+
+        return sprintf('%s:%d:%s', $host, $port, implode(',', $ips));
     }
 }

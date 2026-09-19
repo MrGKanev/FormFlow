@@ -14,6 +14,14 @@ interface SubmissionRepositoryInterface
         string $status = 'received'
     ): int;
 
+    /**
+     * Atomically claims a submission for delivery so two concurrently-running workers
+     * can't both send the same email. Returns false if another worker already holds
+     * a fresh claim on it (a claim older than $staleAfterSeconds is treated as
+     * abandoned, e.g. by a crashed worker, and can be re-claimed).
+     */
+    public function claim(int $submissionId, string $expectedStatus, int $staleAfterSeconds = 900): bool;
+
     public function markSent(int $submissionId): void;
 
     public function markFailed(int $submissionId, string $errorMessage): void;
