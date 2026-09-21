@@ -50,15 +50,21 @@ final class SqliteAuditLogRepository implements AuditLogRepositoryInterface
         ]);
     }
 
-    public function list(int $limit = 100): array
+    public function list(int $limit = 100, int $offset = 0): array
     {
         $statement = $this->pdo->prepare(
-            'SELECT * FROM audit_log ORDER BY created_at DESC, id DESC LIMIT :limit'
+            'SELECT * FROM audit_log ORDER BY created_at DESC, id DESC LIMIT :limit OFFSET :offset'
         );
         $statement->bindValue(':limit', max(1, $limit), PDO::PARAM_INT);
+        $statement->bindValue(':offset', max(0, $offset), PDO::PARAM_INT);
         $statement->execute();
 
         return $statement->fetchAll();
+    }
+
+    public function count(): int
+    {
+        return (int) $this->pdo->query('SELECT COUNT(*) FROM audit_log')->fetchColumn();
     }
 
     private function createSchema(): void

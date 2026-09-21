@@ -7,6 +7,7 @@ namespace formflow;
 final class AdminAuth
 {
     private const RATE_LIMIT_FORM_ID = 'admin_login';
+    private const DUMMY_PASSWORD_HASH = '$2y$10$A0C6YT61Drgppvd0cfLsNeL6.tT2E5C8d29cIppAnPkf.sMWNL7CW';
 
     public function __construct(
         private readonly string $adminUsername,
@@ -51,11 +52,9 @@ final class AdminAuth
             return 'ok';
         }
 
-        if (
-            $this->adminPasswordHash === ''
-            || !hash_equals($this->adminUsername, $username)
-            || !password_verify($password, $this->adminPasswordHash)
-        ) {
+        $passwordMatches = password_verify($password, $this->adminPasswordHash !== '' ? $this->adminPasswordHash : self::DUMMY_PASSWORD_HASH);
+
+        if ($this->adminPasswordHash === '' || !hash_equals($this->adminUsername, $username) || !$passwordMatches) {
             return 'invalid';
         }
 

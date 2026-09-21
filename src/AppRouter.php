@@ -208,6 +208,11 @@ final class AppRouter
             header('Content-Type: text/html; charset=utf-8');
         }
 
+        if (is_callable($result['body'])) {
+            ($result['body'])();
+            return;
+        }
+
         echo $result['body'];
     }
 
@@ -216,7 +221,7 @@ final class AppRouter
     {
         $blocklist = new IpBlocklist($this->security['blocked_ips'] ?? []);
 
-        if (is_string($clientIp) && $blocklist->isBlocked($clientIp)) {
+        if (($clientIp === null && ($this->security['blocked_ips'] ?? []) !== []) || (is_string($clientIp) && $blocklist->isBlocked($clientIp))) {
             http_response_code(403);
             header('Content-Type: application/json; charset=utf-8');
             echo json_encode(['success' => false, 'message' => 'Forbidden.'], JSON_UNESCAPED_SLASHES);

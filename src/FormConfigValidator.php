@@ -278,6 +278,13 @@ final class FormConfigValidator
             if (isset($overrides[$field]) && !self::isHttpUrl($overrides[$field])) {
                 throw new InvalidArgumentException('Per-form webhook URLs must be valid http or https URLs.');
             }
+
+            if (isset($overrides[$field])) {
+                $error = WebhookUrlPolicy::validate($overrides[$field]);
+                if ($error !== null) {
+                    throw new InvalidArgumentException('Per-form webhook URL is not allowed: ' . $error);
+                }
+            }
         }
 
         return $overrides;
@@ -326,8 +333,8 @@ final class FormConfigValidator
 
     private static function assertSafeValue(string $field, string $value): void
     {
-        if (str_contains($value, "'") || str_contains($value, "\n") || str_contains($value, "\r")) {
-            throw new InvalidArgumentException("\"{$field}\" cannot contain a single-quote or a line break.");
+        if (str_contains($value, "\n") || str_contains($value, "\r")) {
+            throw new InvalidArgumentException("\"{$field}\" cannot contain a line break.");
         }
     }
 

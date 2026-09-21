@@ -9,5 +9,7 @@ interface AuditLogRepositoryInterface
     public function record(?string $username, string $action, string $detail): void;
 
     /** @return list<array<string, mixed>> */
-    public function list(int $limit = 100): array;
+    public function list(int $limit = 100, int $offset = 0): array;
+
+    public function count(): int;
 }

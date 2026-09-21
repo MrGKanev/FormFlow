@@ -27,9 +27,7 @@ final class AppFactory
     public function clientIp(array $security): ?string
     {
         $trustedHeaders = $security['trusted_ip_headers'] ?? [
-            'HTTP_CF_CONNECTING_IP',
             'HTTP_X_FORWARDED_FOR',
-            'HTTP_X_REAL_IP',
         ];
 
         return (new ClientIpResolver(
@@ -58,7 +56,13 @@ final class AppFactory
 
     public function ipHashSecret(): string
     {
-        return getenv('IP_HASH_SECRET') ?: hash('sha256', getenv('ADMIN_PASSWORD_HASH') ?: bin2hex(random_bytes(32)));
+        $secret = getenv('IP_HASH_SECRET') ?: getenv('ADMIN_PASSWORD_HASH') ?: '';
+
+        if ($secret === '') {
+            throw new \RuntimeException('IP_HASH_SECRET must be configured before handling requests.');
+        }
+
+        return hash('sha256', $secret);
     }
 
     /** @return array<string, mixed> */
@@ -194,7 +198,7 @@ final class AppFactory
             getenv('TELEGRAM_CHAT_ID') ?: null,
             new SqliteWebhookDeliveryRepository($databasePath),
             null,
-            (getenv('WEBHOOK_DELIVERY_MODE') ?: 'sync') === 'queue'
+            true
         );
     }
 

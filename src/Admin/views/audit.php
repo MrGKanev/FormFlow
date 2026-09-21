@@ -1,5 +1,8 @@
 <?php
 /** @var list<array<string, mixed>> $entries */
+/** @var int $page */
+/** @var int $perPage */
+/** @var int $total */
 ?>
 <div class="page-header">
     <div>
@@ -8,6 +11,14 @@
         <p class="page-meta">Recent admin actions.</p>
     </div>
 </div>
+
+<?php if ($total > $perPage): ?>
+    <nav class="pagination" aria-label="Audit log pages">
+        <?php if ($page > 1): ?><a href="/admin/audit?page=<?= $page - 1 ?>">Previous</a><?php endif; ?>
+        <span>Page <?= $page ?> of <?= (int) ceil($total / $perPage) ?></span>
+        <?php if ($page * $perPage < $total): ?><a href="/admin/audit?page=<?= $page + 1 ?>">Next</a><?php endif; ?>
+    </nav>
+<?php endif; ?>
 
 <?php $settingsSection = 'audit'; require __DIR__ . '/_settings-nav.php'; ?>
 

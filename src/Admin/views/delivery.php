@@ -1,6 +1,9 @@
 <?php
 /** @var list<array<string, mixed>> $entries */
 /** @var list<array<string, mixed>> $webhookEntries */
+/** @var int $page */
+/** @var int $perPage */
+/** @var int $total */
 $statusClass = static fn (string $value): string => 'status-' . preg_replace('/[^a-z0-9_-]+/i', '-', strtolower($value));
 $displayEndpoint = static function (?string $url): string {
     if ($url === null || trim($url) === '') {
@@ -19,6 +22,14 @@ $displayEndpoint = static function (?string $url): string {
         <p class="page-meta">Recent delivery states and failed-send errors.</p>
     </div>
 </div>
+
+<?php if ($total > $perPage): ?>
+    <nav class="pagination" aria-label="Delivery log pages">
+        <?php if ($page > 1): ?><a href="/admin/delivery?page=<?= $page - 1 ?>">Previous</a><?php endif; ?>
+        <span>Page <?= $page ?> of <?= (int) ceil($total / $perPage) ?></span>
+        <?php if ($page * $perPage < $total): ?><a href="/admin/delivery?page=<?= $page + 1 ?>">Next</a><?php endif; ?>
+    </nav>
+<?php endif; ?>
 
 <div class="page-header compact">
     <div>

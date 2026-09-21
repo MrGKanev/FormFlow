@@ -954,4 +954,43 @@ final class FormHandlerTest extends TestCase
 
         $this->assertSame(200, $result['status']);
     }
+
+    public function testFailedCaptchaAttemptsDoNotConsumeTheSharedDailyLimit(): void
+    {
+        $rateLimiter = new SqliteRateLimiter(':memory:');
+        $form = $this->contactForm([
+            'rate_limit_per_ip' => ['max' => 1000, 'window_minutes' => 10],
+            'daily_limit' => 1,
+        ]);
+        $_POST = ['email' => 'ada@example.com', 'cf-turnstile-response' => 'bad-token'];
+
+        $failedCaptchaHandler = $this->makeHandler(
+            ['contact' => $form],
+            turnstile: new FakeTurnstileVerifier(false),
+            rateLimiter: $rateLimiter
+        );
+        $this->assertSame(422, $failedCaptchaHandler->handle('contact')['status']);
+
+        $_POST['cf-turnstile-response'] = 'good-token';
+        $validHandler = $this->makeHandler(
+            ['contact' => $form],
+            turnstile: new FakeTurnstileVerifier(true),
+            rateLimiter: $rateLimiter
+        );
+
+        $this->assertSame(200, $validHandler->handle('contact')['status']);
+    }
+
+    public function testRejectsMoreThanOneHundredTextFields(): void
+    {
+        $_POST = ['email' => 'ada@example.com'];
+        for ($i = 0; $i < 100; $i++) {
+            $_POST['field_' . $i] = 'value';
+        }
+
+        $handler = $this->makeHandler(['contact' => $this->contactForm(['captcha_provider' => 'none'])]);
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Too many form fields.');
+        $handler->handle('contact');
+    }
 }

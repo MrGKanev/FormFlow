@@ -384,8 +384,13 @@ final class AdminController
 
     private function handleAudit(): array
     {
+        $perPage = 50;
+        $page = max(1, (int) ($_GET['page'] ?? 1));
         return $this->htmlResponse(200, $this->render('audit', [
-            'entries' => $this->auditLog?->list() ?? [],
+            'entries' => $this->auditLog?->list($perPage, ($page - 1) * $perPage) ?? [],
+            'page' => $page,
+            'perPage' => $perPage,
+            'total' => $this->auditLog?->count() ?? 0,
         ], 'Audit log'));
     }
 

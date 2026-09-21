@@ -126,6 +126,16 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         ]);
     }
 
+    public function markReviewedMany(array $submissionIds): void
+    {
+        $ids = $this->validIds($submissionIds);
+        if ($ids === []) {
+            return;
+        }
+        $statement = $this->pdo->prepare('UPDATE submissions SET reviewed_at = ? WHERE id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')');
+        $statement->execute(array_merge([Clock::nowIso()], $ids));
+    }
+
     public function delete(int $submissionId): void
     {
         $submission = $this->find($submissionId);
@@ -137,21 +147,42 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         }
     }
 
+    public function deleteMany(array $submissionIds): void
+    {
+        $ids = $this->validIds($submissionIds);
+        if ($ids === []) {
+            return;
+        }
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $select = $this->pdo->prepare('SELECT payload FROM submissions WHERE id IN (' . $placeholders . ')');
+        $select->execute($ids);
+        $payloads = $select->fetchAll(PDO::FETCH_COLUMN);
+        $delete = $this->pdo->prepare('DELETE FROM submissions WHERE id IN (' . $placeholders . ')');
+        $delete->execute($ids);
+        foreach ($payloads as $payload) {
+            $this->deletePayloadUploads((string) $payload);
+        }
+    }
+
     public function deleteOlderThan(int $days): int
     {
         $cutoff = Clock::relativeIso(-(max(1, $days) * 86400));
-        $payloads = $this->payloadsOlderThan($cutoff);
-        $statement = $this->pdo->prepare(
-            'DELETE FROM submissions WHERE created_at < :cutoff'
-        );
-        $statement->execute(['cutoff' => $cutoff]);
-        $deleted = $statement->rowCount();
+        $deleted = 0;
 
-        if ($deleted > 0) {
-            foreach ($payloads as $payload) {
-                $this->deletePayloadUploads($payload);
+        // Retention can process years of submissions; retain only one small batch
+        // of payloads in memory while removing their corresponding uploads.
+        do {
+            $select = $this->pdo->prepare(
+                'SELECT id, payload FROM submissions WHERE created_at < :cutoff ORDER BY id LIMIT 100'
+            );
+            $select->execute(['cutoff' => $cutoff]);
+            $rows = $select->fetchAll();
+
+            foreach ($rows as $row) {
+                $this->delete((int) $row['id']);
+                $deleted++;
             }
-        }
+        } while ($rows !== []);
 
         return $deleted;
     }
@@ -218,6 +249,17 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         return $statement->fetchAll();
     }
 
+    public function iterateForExport(?string $formId, ?string $status, ?string $search = null, ?string $dateFrom = null, ?string $dateTo = null): iterable
+    {
+        [$where, $params] = $this->buildFilter($formId, $status, $search, $dateFrom, $dateTo);
+        $statement = $this->pdo->prepare('SELECT * FROM submissions' . $where . ' ORDER BY created_at DESC, id DESC');
+        $statement->execute($params);
+
+        while (($row = $statement->fetch()) !== false) {
+            yield $row;
+        }
+    }
+
     public function findByIds(array $ids): array
     {
         $ids = array_values(array_unique(array_filter($ids, static fn (int $id): bool => $id > 0)));
@@ -266,18 +308,24 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         return $statement->fetchAll();
     }
 
-    public function deliveryLog(int $limit = 100): array
+    public function deliveryLog(int $limit = 100, int $offset = 0): array
     {
         $statement = $this->pdo->prepare(
             'SELECT id, form_id, status, error_message, created_at, sent_at, reviewed_at
              FROM submissions
              ORDER BY created_at DESC, id DESC
-             LIMIT :limit'
+             LIMIT :limit OFFSET :offset'
         );
         $statement->bindValue(':limit', max(1, $limit), PDO::PARAM_INT);
+        $statement->bindValue(':offset', max(0, $offset), PDO::PARAM_INT);
         $statement->execute();
 
         return $statement->fetchAll();
+    }
+
+    public function deliveryLogCount(): int
+    {
+        return (int) $this->pdo->query('SELECT COUNT(*) FROM submissions WHERE status IN ("pending_mail", "sent", "failed")')->fetchColumn();
     }
 
     public function analytics(): array
@@ -425,15 +473,6 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         return $row === false ? null : (string) $row['created_at'];
     }
 
-    /** @return list<string> */
-    private function payloadsOlderThan(string $cutoff): array
-    {
-        $statement = $this->pdo->prepare('SELECT payload FROM submissions WHERE created_at < :cutoff');
-        $statement->execute(['cutoff' => $cutoff]);
-
-        return array_values(array_map('strval', array_column($statement->fetchAll(), 'payload')));
-    }
-
     private function deletePayloadUploads(string $payloadJson): void
     {
         if ($this->uploadDirectory === '') {
@@ -446,23 +485,7 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
             return;
         }
 
-        foreach ($payload as $value) {
-            if (!is_array($value) || ($value['type'] ?? null) !== 'upload') {
-                continue;
-            }
-
-            $basename = $this->uploadBasename($value);
-
-            if ($basename === null) {
-                continue;
-            }
-
-            $path = rtrim($this->uploadDirectory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $basename;
-
-            if (is_file($path) && $this->pathIsWithin($path, $this->uploadDirectory)) {
-                @unlink($path);
-            }
-        }
+        UploadFileCleaner::deletePayloadUploads($payload, $this->uploadDirectory);
     }
 
     /** @param array<string, mixed> $upload */
@@ -565,8 +588,15 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_submissions_form_id ON submissions(form_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_submissions_created_at ON submissions(created_at)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_submissions_form_status_created_at ON submissions(form_id, status, created_at)');
 
         $this->createSearchIndex();
+    }
+
+    /** @param list<int> $ids @return list<int> */
+    private function validIds(array $ids): array
+    {
+        return array_values(array_unique(array_filter(array_map('intval', $ids), static fn (int $id): bool => $id > 0)));
     }
 
     /**

@@ -110,7 +110,7 @@ $settingsTabs = [
                 <label><span>From name</span><input type="text" name="mail_from_name" value="<?= $value('mail_from_name', 'formflow') ?>" placeholder="formflow"></label>
                 <label class="span-2"><span>SMTP DSN override</span><input type="text" name="mailer_dsn" value="<?= $value('mailer_dsn') ?>" placeholder="smtp://user:pass@host:587"></label>
                 <label><span>Email delivery mode</span><select name="mail_delivery_mode"><option value="sync"<?= $selected('mail_delivery_mode', 'sync') ?>>Sync</option><option value="queue"<?= $selected('mail_delivery_mode', 'queue') ?>>Queue</option></select></label>
-                <label><span>Webhook delivery mode</span><select name="webhook_delivery_mode"><option value="sync"<?= $selected('webhook_delivery_mode', 'sync') ?>>Sync</option><option value="queue"<?= $selected('webhook_delivery_mode', 'queue') ?>>Queue</option></select></label>
+                <label><span>Webhook delivery mode</span><input type="text" value="Queue (required)" readonly><input type="hidden" name="webhook_delivery_mode" value="queue"></label>
             </div>
         </section>
         <div class="form-actions settings-actions"><input type="hidden" name="action" value="save"><button type="submit">Save delivery settings</button></div>

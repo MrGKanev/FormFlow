@@ -155,6 +155,7 @@ final class InstallController
             "GENERIC_WEBHOOK_URL=''",
             "TELEGRAM_BOT_TOKEN=''",
             "TELEGRAM_CHAT_ID=''",
+            "WEBHOOK_DELIVERY_MODE='queue'",
             '',
             "DATABASE_PATH='storage/submissions.sqlite'",
             "IP_HASH_SECRET='" . $ipHashSecret . "'",

@@ -95,4 +95,29 @@ final class FormConfigValidatorTest extends TestCase
             'auto_reply' => ['enabled' => true],
         ]);
     }
+
+    public function testAllowsApostrophesInNotificationOverrides(): void
+    {
+        [, $config] = FormConfigValidator::fromAdminInput([
+            'form_id' => 'contact',
+            'recipient' => 'hello@example.com',
+            'allowed_origins' => 'https://example.com',
+            'generic_webhook_url' => "https://example.com/o'connor",
+        ]);
+
+        $this->assertSame("https://example.com/o'connor", $config['notification_overrides']['generic_webhook_url']);
+    }
+
+    public function testRejectsPrivatePerFormWebhookDestination(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Webhook destination is not allowed.');
+
+        FormConfigValidator::fromAdminInput([
+            'form_id' => 'contact',
+            'recipient' => 'hello@example.com',
+            'allowed_origins' => 'https://example.com',
+            'generic_webhook_url' => 'http://127.0.0.1/hook',
+        ]);
+    }
 }

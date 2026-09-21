@@ -41,5 +41,7 @@ interface WebhookDeliveryRepositoryInterface
     public function replay(int $id): ?int;
 
     /** @return list<array<string, mixed>> */
-    public function deliveryLog(int $limit = 100): array;
+    public function deliveryLog(int $limit = 100, int $offset = 0): array;
+
+    public function deliveryLogCount(): int;
 }

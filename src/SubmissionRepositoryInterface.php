@@ -28,7 +28,13 @@ interface SubmissionRepositoryInterface
 
     public function markReviewed(int $submissionId): void;
 
+    /** @param list<int> $submissionIds */
+    public function markReviewedMany(array $submissionIds): void;
+
     public function delete(int $submissionId): void;
+
+    /** @param list<int> $submissionIds */
+    public function deleteMany(array $submissionIds): void;
 
     public function deleteOlderThan(int $days): int;
 
@@ -55,6 +61,15 @@ interface SubmissionRepositoryInterface
         ?string $dateTo = null
     ): array;
 
+    /** @return iterable<array<string, mixed>> */
+    public function iterateForExport(
+        ?string $formId,
+        ?string $status,
+        ?string $search = null,
+        ?string $dateFrom = null,
+        ?string $dateTo = null
+    ): iterable;
+
     /** @param list<int> $ids @return list<array<string, mixed>> */
     public function findByIds(array $ids): array;
 
@@ -65,7 +80,9 @@ interface SubmissionRepositoryInterface
     public function findPendingMail(int $limit = 100, bool $includeFailed = false): array;
 
     /** @return list<array<string, mixed>> */
-    public function deliveryLog(int $limit = 100): array;
+    public function deliveryLog(int $limit = 100, int $offset = 0): array;
+
+    public function deliveryLogCount(): int;
 
     /** @return list<array<string, mixed>> */
     public function analytics(): array;

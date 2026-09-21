@@ -48,7 +48,7 @@ final class AdminSettingsService
             'telegram_bot_token' => $env['TELEGRAM_BOT_TOKEN'] ?? (getenv('TELEGRAM_BOT_TOKEN') ?: ''),
             'telegram_chat_id' => $env['TELEGRAM_CHAT_ID'] ?? (getenv('TELEGRAM_CHAT_ID') ?: ''),
             'mail_delivery_mode' => $env['MAIL_DELIVERY_MODE'] ?? (getenv('MAIL_DELIVERY_MODE') ?: 'sync'),
-            'webhook_delivery_mode' => $env['WEBHOOK_DELIVERY_MODE'] ?? (getenv('WEBHOOK_DELIVERY_MODE') ?: 'sync'),
+            'webhook_delivery_mode' => 'queue',
             'database_path' => $env['DATABASE_PATH'] ?? (getenv('DATABASE_PATH') ?: 'storage/submissions.sqlite'),
             'ip_hash_secret' => $env['IP_HASH_SECRET'] ?? (getenv('IP_HASH_SECRET') ?: ''),
             'retention_days' => $env['RETENTION_DAYS'] ?? (getenv('RETENTION_DAYS') ?: '180'),
@@ -152,10 +152,10 @@ final class AdminSettingsService
         }
 
         $mailDeliveryMode = strtolower(trim((string) ($input['mail_delivery_mode'] ?? 'sync')));
-        $webhookDeliveryMode = strtolower(trim((string) ($input['webhook_delivery_mode'] ?? 'sync')));
+        $webhookDeliveryMode = 'queue';
 
-        if (!in_array($mailDeliveryMode, ['sync', 'queue'], true) || !in_array($webhookDeliveryMode, ['sync', 'queue'], true)) {
-            throw new InvalidArgumentException('Delivery modes must be sync or queue.');
+        if (!in_array($mailDeliveryMode, ['sync', 'queue'], true)) {
+            throw new InvalidArgumentException('Mail delivery mode must be sync or queue.');
         }
 
         $databasePath = trim((string) ($input['database_path'] ?? ''));

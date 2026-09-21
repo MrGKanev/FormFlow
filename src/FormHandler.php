@@ -10,6 +10,7 @@ use Throwable;
 
 final class FormHandler
 {
+    private const MAX_TEXT_FIELDS = 100;
     public function __construct(
         private readonly array $forms,
         private readonly MailSenderInterface $mailService,
@@ -47,30 +48,6 @@ final class FormHandler
         // requests are rejected on a cheap comparison and must not be able to burn
         // through the per-IP or (shared, form-wide) daily submission budget.
         $this->assertApiKey($formId, !empty($config['require_api_key']));
-
-        $this->rateLimiter->hit($formId, $ipHash);
-
-        $perIpLimit = array_merge(
-            ['max' => 5, 'window_minutes' => 10],
-            $config['rate_limit_per_ip'] ?? []
-        );
-
-        $recentIpHits = $this->rateLimiter->countRecentHitsByIp(
-            $formId,
-            $ipHash,
-            (int) $perIpLimit['window_minutes']
-        );
-
-        if ($recentIpHits > (int) $perIpLimit['max']) {
-            return HttpResponse::json(429, ['success' => false, 'message' => 'Too many submissions. Please try again later.']);
-        }
-
-        $dailyLimit = (int) ($config['daily_limit'] ?? 200);
-        $todayHits = $this->rateLimiter->countRecentHitsForForm($formId, 1440);
-
-        if ($todayHits > $dailyLimit) {
-            return HttpResponse::json(429, ['success' => false, 'message' => 'Daily submission limit reached for this form.']);
-        }
 
         if (!empty($_POST['_website'])) {
             try {
@@ -125,6 +102,14 @@ final class FormHandler
                 }
             }
 
+            // Only submissions that pass the inexpensive authentication and the
+            // CAPTCHA gate consume the form's shared delivery budget.
+            $rateLimitResponse = $this->rateLimitResponse($formId, $ipHash, $config);
+
+            if ($rateLimitResponse !== null) {
+                return $rateLimitResponse;
+            }
+
             $submissionId = $this->repository->create(
                 $formId,
                 $fields,
@@ -149,7 +134,8 @@ final class FormHandler
 
                 try {
                     AutoReply::send($this->mailService, $formId, $config, $fields);
-                } catch (Throwable) {
+                } catch (Throwable $exception) {
+                    error_log(sprintf('Auto-reply failed for form "%s": %s', $formId, $exception->getMessage()));
                 }
             } catch (Throwable $exception) {
                 $this->repository->markFailed($submissionId, $exception->getMessage());
@@ -163,7 +149,8 @@ final class FormHandler
                 ? $config['notification_overrides']
                 : [];
             $this->webhookNotifier?->notify($formId, $fields, (array) $config['delivery_channels'], $overrides);
-        } catch (Throwable) {
+        } catch (Throwable $exception) {
+            error_log(sprintf('Webhook notification failed for form "%s": %s', $formId, $exception->getMessage()));
         }
 
         return HttpResponse::json(
@@ -257,6 +244,10 @@ final class FormHandler
                 continue;
             }
 
+            if (count($result) >= self::MAX_TEXT_FIELDS) {
+                throw new InvalidArgumentException('Too many form fields.');
+            }
+
             if (is_array($value)) {
                 $value = implode(', ', array_map('strval', $value));
             }
@@ -271,6 +262,23 @@ final class FormHandler
         }
 
         return $result;
+    }
+
+    /** @param array<string, mixed> $config */
+    private function rateLimitResponse(string $formId, string $ipHash, array $config): ?HttpResponse
+    {
+        $this->rateLimiter->hit($formId, $ipHash);
+        $perIpLimit = array_merge(['max' => 5, 'window_minutes' => 10], $config['rate_limit_per_ip'] ?? []);
+
+        if ($this->rateLimiter->countRecentHitsByIp($formId, $ipHash, (int) $perIpLimit['window_minutes']) > (int) $perIpLimit['max']) {
+            return HttpResponse::json(429, ['success' => false, 'message' => 'Too many submissions. Please try again later.']);
+        }
+
+        if ($this->rateLimiter->countRecentHitsForForm($formId, 1440) > (int) ($config['daily_limit'] ?? 200)) {
+            return HttpResponse::json(429, ['success' => false, 'message' => 'Daily submission limit reached for this form.']);
+        }
+
+        return null;
     }
 
     /** @return array<string, mixed> */
@@ -483,33 +491,7 @@ final class FormHandler
     /** @param array<string, mixed> $fields */
     private function deleteStoredUploads(array $fields): void
     {
-        $uploadRoot = realpath($this->uploadDirectory);
-
-        if ($uploadRoot === false) {
-            return;
-        }
-
-        foreach ($fields as $value) {
-            if (!is_array($value) || ($value['type'] ?? null) !== 'upload') {
-                continue;
-            }
-
-            $storedName = trim((string) ($value['stored_name'] ?? ''));
-
-            if ($storedName === '' || $storedName !== basename($storedName)) {
-                continue;
-            }
-
-            $path = realpath($uploadRoot . DIRECTORY_SEPARATOR . $storedName);
-
-            if (
-                $path !== false
-                && ($path === $uploadRoot || str_starts_with($path, $uploadRoot . DIRECTORY_SEPARATOR))
-                && is_file($path)
-            ) {
-                @unlink($path);
-            }
-        }
+        UploadFileCleaner::deletePayloadUploads($fields, $this->uploadDirectory);
     }
 
     private function isSystemField(string $field): bool

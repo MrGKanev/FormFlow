@@ -1186,7 +1186,10 @@ final class AdminControllerTest extends TestCase
         $_POST = [];
         $export = $controller->handle('admin/export');
         $this->assertSame(200, $export['status']);
-        $this->assertStringContainsString('payload_json', $export['body']);
+        $this->assertIsCallable($export['body']);
+        ob_start();
+        ($export['body'])();
+        $this->assertStringContainsString('payload_json', (string) ob_get_clean());
         $this->assertSame('text/csv; charset=utf-8', $export['headers']['Content-Type']);
 
         $_SERVER['REQUEST_METHOD'] = 'POST';

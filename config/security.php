@@ -14,8 +14,6 @@ return [
     ],
 
     'trusted_ip_headers' => [
-        'HTTP_CF_CONNECTING_IP',
         'HTTP_X_FORWARDED_FOR',
-        'HTTP_X_REAL_IP',
     ],
 ];

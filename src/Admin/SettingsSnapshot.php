@@ -66,6 +66,6 @@ final class SettingsSnapshot
 
     public function webhookDeliveryMode(): string
     {
-        return $this->string('webhook_delivery_mode', 'sync');
+        return 'queue';
     }
 }

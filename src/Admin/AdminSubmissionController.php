@@ -170,10 +170,10 @@ final class AdminSubmissionController
     public function export(): array
     {
         [$formId, $status, $search, $dateFrom, $dateTo] = $this->filters($_GET);
-        $rows = $this->submissions->findForExport($formId, $status, $search, $dateFrom, $dateTo);
-        $this->recordAudit('submissions.export', 'Exported ' . count($rows) . ' submissions.');
+        $rows = $this->submissions->iterateForExport($formId, $status, $search, $dateFrom, $dateTo);
+        $this->recordAudit('submissions.export', 'Started streaming submission export.');
 
-        return $this->csvResponse($rows);
+        return $this->streamCsvResponse($rows);
     }
 
     /** @return array<string, mixed> */
@@ -201,20 +201,20 @@ final class AdminSubmissionController
             return $this->csvResponse($rows, 'formflow-selected-submissions.csv');
         }
 
-        foreach ($ids as $id) {
-            $submission = $this->submissions->find($id);
+        // Fetch the selected rows once. The previous per-ID find() produced an
+        // unnecessary N+1 read pattern for every bulk action.
+        $selectedSubmissions = $this->submissions->findByIds($ids);
 
-            if ($submission === null) {
-                continue;
-            }
+        if ($action === 'review') {
+            $this->submissions->markReviewedMany(array_column($selectedSubmissions, 'id'));
+        }
 
-            if ($action === 'review') {
-                $this->submissions->markReviewed($id);
-            }
+        if ($action === 'delete') {
+            $this->submissions->deleteMany(array_column($selectedSubmissions, 'id'));
+        }
 
-            if ($action === 'delete') {
-                $this->submissions->delete($id);
-            }
+        foreach ($selectedSubmissions as $submission) {
+            $id = (int) $submission['id'];
 
             if ($action === 'resend' && (string) $submission['status'] === 'failed') {
                 $this->service->resend($submission);
@@ -229,9 +229,16 @@ final class AdminSubmissionController
     /** @return array<string, mixed> */
     public function delivery(): array
     {
+        $perPage = 50;
+        $page = max(1, (int) ($_GET['page'] ?? 1));
+        $offset = ($page - 1) * $perPage;
+
         return $this->htmlResponse(200, $this->renderer->render('delivery', [
-            'entries' => $this->submissions->deliveryLog(),
-            'webhookEntries' => $this->webhookDeliveries?->deliveryLog() ?? [],
+            'entries' => $this->submissions->deliveryLog($perPage, $offset),
+            'webhookEntries' => $this->webhookDeliveries?->deliveryLog($perPage, $offset) ?? [],
+            'page' => $page,
+            'perPage' => $perPage,
+            'total' => max($this->submissions->deliveryLogCount(), $this->webhookDeliveries?->deliveryLogCount() ?? 0),
         ], 'Delivery log'));
     }
 
@@ -339,6 +346,32 @@ final class AdminSubmissionController
             'headers' => [
                 'Content-Type' => 'text/csv; charset=utf-8',
                 'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+            ],
+        ];
+    }
+
+    /** @param iterable<array<string, mixed>> $rows @return array<string, mixed> */
+    private function streamCsvResponse(iterable $rows): array
+    {
+        return [
+            'status' => 200,
+            'body' => static function () use ($rows): void {
+                $output = fopen('php://output', 'w');
+                if ($output === false) {
+                    return;
+                }
+                fputcsv($output, ['id', 'form_id', 'status', 'created_at', 'sent_at', 'reviewed_at', 'error_message', 'payload_json'], ',', '"', '');
+                foreach ($rows as $row) {
+                    fputcsv($output, array_map(static function (mixed $value): mixed {
+                        return is_string($value) && $value !== '' && str_contains("=+-@\t\r", $value[0]) ? "'" . $value : $value;
+                    }, [$row['id'] ?? '', $row['form_id'] ?? '', $row['status'] ?? '', $row['created_at'] ?? '', $row['sent_at'] ?? '', $row['reviewed_at'] ?? '', $row['error_message'] ?? '', $row['payload'] ?? '']), ',', '"', '');
+                }
+                fclose($output);
+            },
+            'redirect' => null,
+            'headers' => [
+                'Content-Type' => 'text/csv; charset=utf-8',
+                'Content-Disposition' => 'attachment; filename="formflow-submissions.csv"',
             ],
         ];
     }
