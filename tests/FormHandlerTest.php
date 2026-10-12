@@ -82,6 +82,70 @@ final class FormHandlerTest extends TestCase
         );
     }
 
+    public function testExplicitDisallowedOriginCannotUseAllowedReferer(): void
+    {
+        $_SERVER['HTTP_ORIGIN'] = 'https://attacker.example';
+        $_SERVER['HTTP_REFERER'] = 'https://example.com/contact';
+        $handler = $this->makeHandler(['contact' => $this->contactForm()]);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Origin is not allowed.');
+        $handler->handle('contact');
+    }
+
+    public function testMissingClientIpStillAllowsSubmission(): void
+    {
+        unset($_SERVER['REMOTE_ADDR']);
+        $_POST = ['email' => 'ada@example.com'];
+        $handler = $this->makeHandler(['contact' => $this->contactForm(['captcha_provider' => 'none'])]);
+
+        $this->assertSame(200, $handler->handle('contact')['status']);
+    }
+
+    public function testRateLimitedUploadDoesNotLeaveAnOrphanedFile(): void
+    {
+        $directory = sys_get_temp_dir() . '/formflow-upload-' . bin2hex(random_bytes(6));
+        $source = tempnam(sys_get_temp_dir(), 'formflow-source-');
+        self::assertNotFalse($source);
+        file_put_contents($source, 'Plain text attachment');
+        $_POST = ['email' => 'ada@example.com'];
+        $_FILES = ['attachment' => [
+            'name' => 'document.txt',
+            'tmp_name' => $source,
+            'error' => UPLOAD_ERR_OK,
+            'size' => filesize($source),
+        ]];
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $mail = new FakeMailSender();
+        $handler = $this->makeHandler(['contact' => $this->contactForm([
+            'captcha_provider' => 'none',
+            'rate_limit_per_ip' => ['max' => 1, 'window_minutes' => 10],
+            'uploads' => ['allowed_extensions' => ['txt']],
+        ])], $mail, repository: $repository, uploadDirectory: $directory);
+
+        try {
+            // Exhaust the budget without uploading, then attempt an upload.
+            $upload = $_FILES;
+            $_FILES = [];
+            $this->assertSame(200, $handler->handle('contact')['status']);
+            $_FILES = $upload;
+            $this->assertSame(429, $handler->handle('contact')['status']);
+            $this->assertSame([], glob($directory . '/*') ?: []);
+            $this->assertNull($repository->find(2));
+            $this->assertCount(1, $mail->sentMessages);
+        } finally {
+            foreach (glob($directory . '/*') ?: [] as $file) {
+                unlink($file);
+            }
+            if (is_dir($directory)) {
+                rmdir($directory);
+            }
+            if (is_file($source)) {
+                unlink($source);
+            }
+        }
+    }
+
     public function testSuccessfulSubmissionSendsPersonalizedAutoReply(): void
     {
         $_POST = ['email' => 'ada@example.com', 'name' => 'Ada'];
@@ -432,7 +496,7 @@ final class FormHandlerTest extends TestCase
                 'captcha_provider' => 'none',
                 'delivery_channels' => ['slack'],
                 'notification_overrides' => [
-                    'slack_webhook_url' => 'https://hooks.slack.test/form-specific',
+                    'slack_webhook_url' => 'https://93.184.216.34/form-specific',
                 ],
             ])],
             webhookNotifier: $notifier
@@ -441,7 +505,7 @@ final class FormHandlerTest extends TestCase
         $handler->handle('contact');
 
         $this->assertSame([
-            'slack_webhook_url' => 'https://hooks.slack.test/form-specific',
+            'slack_webhook_url' => 'https://93.184.216.34/form-specific',
         ], $notifier->notifications[0]['overrides']);
     }
 

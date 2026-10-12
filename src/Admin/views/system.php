@@ -2,7 +2,7 @@
 /** @var array<string, string|int> $status */
 /** @var list<string> $warnings */
 $badge = static function (string $label, string|int $value): string {
-    if (in_array($value, ['Present', 'Present at request start', 'Writable', 'production', 'sync', 'queue', 'Outside public root', 'Deny rule present', 'No pending work', 'Not required'], true) || (is_int($value) && $value === 0)) {
+    if (in_array($value, ['Present', 'Present at request start', 'Writable', 'production', 'sync', 'queue', 'Outside public root', 'Deny rule present', 'No pending work', 'Not required', 'Healthy', 'completed'], true) || (is_int($value) && $value === 0)) {
         return 'good';
     }
 
@@ -20,7 +20,7 @@ $badge = static function (string $label, string|int $value): string {
 
     return 'danger';
 };
-$isLongValue = static fn (string $label): bool => in_array($label, ['database_path', 'mail_worker_last_run', 'webhook_worker_last_run'], true);
+$isLongValue = static fn (string $label): bool => in_array($label, ['database_path', 'mail_worker_last_run', 'webhook_worker_last_run', 'mail_worker_last_success', 'webhook_worker_last_success'], true);
 ?>
 <div class="page-header">
     <div>

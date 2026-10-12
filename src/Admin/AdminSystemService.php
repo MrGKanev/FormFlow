@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace formflow\Admin;
 
 use formflow\Clock;
+use formflow\DeliveryMonitor;
 use formflow\SubmissionRepositoryInterface;
 use formflow\WebhookDeliveryRepositoryInterface;
 
@@ -33,6 +34,7 @@ final class AdminSystemService
         $failedMail = $this->submissions->count(null, 'failed');
         $pendingMail = $this->submissions->count(null, 'pending_mail');
         $pendingWebhooks = $this->webhookDeliveries?->countByStatus('pending') ?? 0;
+        $delivery = DeliveryMonitor::fromEnvironment($this->submissions, $this->webhookDeliveries, $this->root)->snapshot();
 
         return [
             'php_version' => PHP_VERSION,
@@ -50,10 +52,16 @@ final class AdminSystemService
             'pending_mail' => $pendingMail,
             'mail_queue_lag' => $this->queueLag($this->submissions->oldestCreatedAtByStatus('pending_mail')),
             'mail_worker_last_run' => $this->workerLastRun('mail'),
+            'mail_worker_last_success' => $delivery['mail']['last_success'] ?? 'Never',
+            'mail_worker_status' => $delivery['mail']['worker_status'],
             'failed_mail' => $failedMail,
             'pending_webhooks' => $pendingWebhooks,
             'webhook_queue_lag' => $this->queueLag($this->webhookDeliveries?->oldestCreatedAtByStatus('pending')),
             'webhook_worker_last_run' => $this->workerLastRun('webhooks'),
+            'webhook_worker_last_success' => $delivery['webhooks']['last_success'] ?? 'Never',
+            'webhook_worker_status' => $delivery['webhooks']['worker_status'],
+            'failed_webhooks' => $delivery['webhooks']['failed'],
+            'delivery_health' => $delivery['healthy'] ? 'Healthy' : 'Needs attention',
             'forms' => $this->formCount,
             'trusted_proxies' => count($settings->lines('trusted_proxies')),
         ];
@@ -92,7 +100,9 @@ final class AdminSystemService
             $warnings[] = 'Webhook queue mode is enabled, but no webhook worker heartbeat has been recorded.';
         }
 
-        return $warnings;
+        return array_values(array_unique(array_merge($warnings, DeliveryMonitor::fromEnvironment(
+            $this->submissions, $this->webhookDeliveries, $this->root
+        )->snapshot()['alerts'])));
     }
 
     /** @return list<string> */
@@ -110,10 +120,8 @@ final class AdminSystemService
             return [];
         }
 
-        $packages = array_merge(
-            is_array($lock['packages'] ?? null) ? $lock['packages'] : [],
-            is_array($lock['packages-dev'] ?? null) ? $lock['packages-dev'] : []
-        );
+        // Production installs deliberately omit packages-dev (--no-dev).
+        $packages = is_array($lock['packages'] ?? null) ? $lock['packages'] : [];
         $missing = [];
 
         foreach ($packages as $package) {

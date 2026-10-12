@@ -3,11 +3,9 @@ services:
     build: .
     ports:
       - "127.0.0.1:8080:80"
-    env_file:
-      - .env
     volumes:
       - ./storage:/var/www/html/storage
-      - ./.env:/var/www/html/.env
+      - formflow-config:/var/www/html/config
     read_only: true
     tmpfs:
       - /tmp
@@ -21,3 +19,6 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
+
+volumes:
+  formflow-config:

@@ -11,6 +11,35 @@ use PHPUnit\Framework\TestCase;
 
 final class CurlWebhookNotifierTest extends TestCase
 {
+    public function testSynchronousDetailedTransportRetainsIdAndStopsOnReceiverDelay(): void
+    {
+        $repository = new \formflow\SqliteWebhookDeliveryRepository(':memory:');
+        $transport = new class implements \formflow\DetailedWebhookTransportInterface {
+            /** @var list<string> */
+            public array $ids = [];
+            public bool $retryable = true;
+            public ?int $delay = null;
+            public function postJson(string $url, array $payload): ?string { return 'error'; }
+            public function deliver(string $url, array $payload, string $deliveryId): \formflow\WebhookTransportResult
+            {
+                $this->ids[] = $deliveryId;
+                return new \formflow\WebhookTransportResult('error', $this->retryable, $this->delay);
+            }
+        };
+        $notifier = new \formflow\CurlWebhookNotifier(null, 'https://hooks.example.test', null, null, null, $repository, $transport);
+        $notifier->notify('contact', [], ['slack']);
+        $this->assertCount(2, $transport->ids);
+        $this->assertSame($transport->ids[0], $transport->ids[1]);
+        $transport->delay = 600;
+        $notifier->notify('contact', [], ['slack']);
+        $this->assertCount(3, $transport->ids);
+        $this->assertSame(1, $repository->deliveryLog()[0]['attempts']);
+        $transport->delay = null;
+        $transport->retryable = false;
+        $notifier->notify('contact', [], ['slack']);
+        $this->assertCount(4, $transport->ids);
+    }
+
     public function testSendsOnlyChannelsSelectedByTheForm(): void
     {
         $transport = new FakeWebhookTransport();

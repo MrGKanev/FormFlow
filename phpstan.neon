@@ -1,5 +1,6 @@
 parameters:
-  level: 3
+  level: 6
   paths:
     - src
+    - bin/formflow
   tmpDir: storage/phpstan

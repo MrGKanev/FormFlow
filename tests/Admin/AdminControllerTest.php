@@ -473,6 +473,47 @@ final class AdminControllerTest extends TestCase
         }
     }
 
+    public function testUploadDownloadSanitizesUntrustedHeaderMetadata(): void
+    {
+        $directory = sys_get_temp_dir() . '/formflow-admin-upload-' . bin2hex(random_bytes(6));
+        mkdir($directory);
+        file_put_contents($directory . '/stored.txt', 'safe-content');
+        $submissions = new SqliteSubmissionRepository(':memory:');
+        $id = $submissions->create('contact', [
+            'attachment' => [
+                'type' => 'upload',
+                'stored_name' => 'stored.txt',
+                'original_name' => "notes\r\nX-Injected: true.txt",
+                'mime_type' => "text/plain\r\nX-Injected: true",
+            ],
+        ], null);
+        $controller = $this->makeController(submissions: $submissions, uploadDirectory: $directory);
+        $this->login($controller);
+
+        try {
+            $result = $controller->handle('admin/submissions/' . $id . '/uploads/attachment');
+            $this->assertSame(200, $result['status']);
+            $this->assertSame('application/octet-stream', $result['headers']['Content-Type']);
+            $this->assertStringNotContainsString("\r", $result['headers']['Content-Disposition']);
+            $this->assertStringNotContainsString("\n", $result['headers']['Content-Disposition']);
+        } finally {
+            unlink($directory . '/stored.txt');
+            rmdir($directory);
+        }
+    }
+
+    public function testUploadDownloadRejectsUnconfiguredDirectory(): void
+    {
+        $submissions = new SqliteSubmissionRepository(':memory:');
+        $id = $submissions->create('contact', [
+            'attachment' => ['type' => 'upload', 'stored_name' => '.DS_Store'],
+        ], null);
+        $controller = $this->makeController(submissions: $submissions);
+        $this->login($controller);
+
+        $this->assertSame(404, $controller->handle('admin/submissions/' . $id . '/uploads/attachment')['status']);
+    }
+
     public function testWhitelistPostAddCreatesEntryAndRedirects(): void
     {
         $whitelistRepository = new SqliteAdminWhitelistRepository(':memory:');

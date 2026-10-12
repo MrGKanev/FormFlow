@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace formflow\Tests;
 
 use PHPUnit\Framework\TestCase;
+use formflow\SqliteSubmissionRepository;
 
 final class PublicRoutesTest extends TestCase
 {
+    use MonitoringFixture;
     public function testHealthRouteReturnsMachineReadableLivenessPayload(): void
     {
         [$exitCode, $output, $error] = $this->request(
@@ -41,16 +43,59 @@ final class PublicRoutesTest extends TestCase
         $this->assertStringNotContainsString('<a href="/admin"', $output);
     }
 
+    public function testDeliveryStatusRouteAuthenticatesBeforeOpeningDatabase(): void
+    {
+        file_put_contents($this->root . '/.env', "APP_ENV='test'\n");
+        foreach ([['', 'GET', 401], ['Bearer secret', 'POST', 405], ['Bearer secret', 'GET', 503]] as [$header, $method, $expected]) {
+            [$exit, $output, $error] = $this->request('/api/delivery-status', ['HTTP_AUTHORIZATION' => $header, 'REQUEST_METHOD' => $method], [], $this->root,
+                ['OPERATIONS_API_TOKEN' => 'secret', 'DATABASE_PATH' => 'storage/submissions.sqlite'], true);
+            self::assertSame(0, $exit, $error);
+            self::assertSame($expected, json_decode($output, true, 512, JSON_THROW_ON_ERROR)['status']);
+            self::assertFileDoesNotExist($this->root . '/storage/submissions.sqlite');
+        }
+    }
+
+    public function testDeliveryStatusAcceptsAuthorizationPreservedByApacheInternalRedirect(): void
+    {
+        file_put_contents($this->root . '/.env', "APP_ENV='test'\n");
+        new SqliteSubmissionRepository($this->root . '/storage/submissions.sqlite');
+        [$exit, $output, $error] = $this->request('/api/delivery-status', ['REDIRECT_HTTP_AUTHORIZATION' => 'Bearer secret'], [], $this->root,
+            ['OPERATIONS_API_TOKEN' => 'secret', 'DATABASE_PATH' => 'storage/submissions.sqlite'], true);
+        self::assertSame(0, $exit, $error);
+        $response = json_decode($output, true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame(200, $response['status']);
+        self::assertTrue($response['body']['healthy']);
+    }
+
+    public function testDeliveryStatusRouteReportsHealthyAndPendingQueues(): void
+    {
+        file_put_contents($this->root . '/.env', "APP_ENV='test'\n");
+        $repository = new SqliteSubmissionRepository($this->root . '/storage/submissions.sqlite');
+        foreach ([200, 503] as $expected) {
+            [$exit, $output, $error] = $this->request('/api/delivery-status', ['HTTP_AUTHORIZATION' => 'Bearer secret'], [], $this->root,
+                ['OPERATIONS_API_TOKEN' => 'secret', 'DATABASE_PATH' => 'storage/submissions.sqlite'], true);
+            self::assertSame(0, $exit, $error);
+            $response = json_decode($output, true, 512, JSON_THROW_ON_ERROR);
+            self::assertSame($expected, $response['status']);
+            self::assertSame($expected === 200, $response['body']['healthy']);
+            $repository->create('contact', ['email' => 'private@example.com'], null, 'pending_mail');
+            self::assertStringNotContainsString('private', $output);
+        }
+    }
+
     /**
      * @param array<string, string> $serverOverrides
      * @param array<string, string> $query
+     * @param array<string, string> $environmentOverrides
      * @return array{0: int, 1: string, 2: string}
      */
     private function request(
         string $path,
         array $serverOverrides = [],
         array $query = [],
-        ?string $routerRoot = null
+        ?string $routerRoot = null,
+        array $environmentOverrides = [],
+        bool $captureStatus = false
     ): array
     {
         $server = array_merge([
@@ -59,15 +104,21 @@ final class PublicRoutesTest extends TestCase
             'REMOTE_ADDR' => '203.0.113.7',
         ], $serverOverrides);
         $script = <<<'PHP'
+foreach (json_decode($argv[5], true, 512, JSON_THROW_ON_ERROR) as $key => $value) { putenv($key . '=' . $value); }
+if ($argv[6] === 'capture') { ob_start(); }
 $_SERVER = json_decode($argv[1], true, 512, JSON_THROW_ON_ERROR);
 $_GET = json_decode($argv[2], true, 512, JSON_THROW_ON_ERROR);
 $_POST = [];
 $_FILES = [];
 require $argv[3];
 
-if (isset($argv[4])) {
+if ($argv[4] !== '') {
     $root = $argv[4];
     (new \formflow\AppRouter(new \formflow\AppFactory($root), [], $root))->dispatch();
+}
+if ($argv[6] === 'capture') {
+    $body = ob_get_clean();
+    echo json_encode(['status' => http_response_code(), 'body' => json_decode($body, true)], JSON_THROW_ON_ERROR);
 }
 PHP;
         $command = [
@@ -81,9 +132,9 @@ PHP;
                 : dirname(__DIR__) . '/vendor/autoload.php',
         ];
 
-        if ($routerRoot !== null) {
-            $command[] = $routerRoot;
-        }
+        $command[] = $routerRoot ?? '';
+        $command[] = json_encode($environmentOverrides, JSON_THROW_ON_ERROR);
+        $command[] = $captureStatus ? 'capture' : '';
 
         $process = proc_open(
             $command,

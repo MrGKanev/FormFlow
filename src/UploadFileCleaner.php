@@ -9,6 +9,10 @@ final class UploadFileCleaner
     /** @param array<string, mixed> $payload */
     public static function deletePayloadUploads(array $payload, string $uploadDirectory): void
     {
+        if ($uploadDirectory === '') {
+            return;
+        }
+
         $root = realpath($uploadDirectory);
 
         if ($root === false) {

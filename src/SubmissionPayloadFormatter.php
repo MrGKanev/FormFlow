@@ -6,7 +6,10 @@ namespace formflow;
 
 final class SubmissionPayloadFormatter
 {
-    /** @param array<string, mixed> $payload @return array<string, string> */
+    /**
+     * @param array<string, mixed> $payload
+     * @return array<string, string>
+     */
     public static function displayFields(array $payload): array
     {
         $fields = [];

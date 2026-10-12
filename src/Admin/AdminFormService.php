@@ -19,6 +19,9 @@ final class AdminFormService
     ) {
     }
 
+    /**
+     * @param array<string, mixed> $input
+     */
     public function create(array $input): string
     {
         if (trim((string) ($input['form_id'] ?? '')) === '') {
@@ -53,6 +56,9 @@ final class AdminFormService
         return $formId;
     }
 
+    /**
+     * @param array<string, mixed> $input
+     */
     public function update(string $formId, array $input): void
     {
         [, $config] = FormConfigValidator::fromAdminInput($input, $formId);
@@ -70,39 +76,40 @@ final class AdminFormService
         return array_keys($this->formRepository->all());
     }
 
-    /** @param array<string, mixed> $config @return array<string, mixed> */
+    /**
+     * @param array<string, mixed> $config
+     * @return array<string, mixed>
+     */
     public function valuesFromConfig(string $formId, array $config): array
     {
         $config = FormConfigValidator::normalize($formId, $config);
 
         return [
             'form_id' => $formId,
-            'form_name' => (string) ($config['name'] ?? $formId),
-            'recipient' => (string) ($config['recipient'] ?? ''),
-            'allowed_origins' => implode(PHP_EOL, $config['allowed_origins'] ?? []),
-            'subject' => (string) ($config['subject'] ?? ''),
+            'form_name' => $config['name'],
+            'recipient' => $config['recipient'],
+            'allowed_origins' => implode(PHP_EOL, $config['allowed_origins']),
+            'subject' => $config['subject'],
             'success_redirect' => (string) ($config['success_redirect'] ?? ''),
-            'rate_limit_max' => (string) (int) (($config['rate_limit_per_ip']['max'] ?? 5)),
-            'rate_limit_window' => (string) (int) (($config['rate_limit_per_ip']['window_minutes'] ?? 10)),
-            'daily_limit' => (string) (int) ($config['daily_limit'] ?? 200),
-            'captcha_provider' => (string) ($config['captcha_provider'] ?? 'none'),
+            'rate_limit_max' => (string) $config['rate_limit_per_ip']['max'],
+            'rate_limit_window' => (string) $config['rate_limit_per_ip']['window_minutes'],
+            'daily_limit' => (string) $config['daily_limit'],
+            'captcha_provider' => $config['captcha_provider'],
             'require_api_key' => !empty($config['require_api_key']) ? '1' : '',
             'blocked_patterns' => implode(PHP_EOL, $config['blocked_patterns'] ?? []),
-            'upload_max_file_size_mb' => (string) (int) ($config['uploads']['max_file_size_mb'] ?? 10),
-            'upload_max_files' => (string) (int) ($config['uploads']['max_files'] ?? 3),
-            'upload_allowed_extensions' => implode(PHP_EOL, $config['uploads']['allowed_extensions'] ?? []),
+            'upload_max_file_size_mb' => (string) $config['uploads']['max_file_size_mb'],
+            'upload_max_files' => (string) $config['uploads']['max_files'],
+            'upload_allowed_extensions' => implode(PHP_EOL, $config['uploads']['allowed_extensions']),
             'uploads_enabled' => !empty($config['uploads']['enabled']) ? '1' : '',
-            'delivery_channels' => is_array($config['delivery_channels'] ?? null)
-                ? $config['delivery_channels']
-                : [],
+            'delivery_channels' => $config['delivery_channels'],
             'discord_webhook_url' => (string) ($config['notification_overrides']['discord_webhook_url'] ?? ''),
             'slack_webhook_url' => (string) ($config['notification_overrides']['slack_webhook_url'] ?? ''),
             'generic_webhook_url' => (string) ($config['notification_overrides']['generic_webhook_url'] ?? ''),
             'telegram_bot_token' => (string) ($config['notification_overrides']['telegram_bot_token'] ?? ''),
             'telegram_chat_id' => (string) ($config['notification_overrides']['telegram_chat_id'] ?? ''),
             'auto_reply_enabled' => !empty($config['auto_reply']['enabled']) ? '1' : '',
-            'auto_reply_subject' => (string) ($config['auto_reply']['subject'] ?? ''),
-            'auto_reply_body' => (string) ($config['auto_reply']['body'] ?? ''),
+            'auto_reply_subject' => $config['auto_reply']['subject'],
+            'auto_reply_body' => $config['auto_reply']['body'],
         ];
     }
 }

@@ -50,6 +50,39 @@ final class AdminBackupService
         return $header === "SQLite format 3\0";
     }
 
+    /** Return a standalone SQLite snapshot, including committed WAL transactions. */
+    public function snapshotDatabase(string $path): string
+    {
+        $allowedPath = $this->databasePath($path);
+        if ($allowedPath === null || !is_file($allowedPath) || !$this->isSqliteDatabase($allowedPath)) {
+            throw new \RuntimeException('Backup database is unavailable or not allowed.');
+        }
+        $snapshot = tempnam(sys_get_temp_dir(), 'formflow-admin-backup-');
+        if ($snapshot === false) {
+            throw new \RuntimeException('Cannot create backup snapshot.');
+        }
+        unlink($snapshot);
+        try {
+            $pdo = new \PDO('sqlite:' . $allowedPath, null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
+            $pdo->exec('PRAGMA busy_timeout = 5000');
+            $previousMask = umask(0077);
+            try {
+                $pdo->exec('VACUUM INTO ' . $pdo->quote($snapshot));
+            } finally {
+                umask($previousMask);
+            }
+            $content = file_get_contents($snapshot);
+            if ($content === false) {
+                throw new \RuntimeException('Cannot read backup snapshot.');
+            }
+            return $content;
+        } finally {
+            if (is_file($snapshot)) {
+                unlink($snapshot);
+            }
+        }
+    }
+
     private function pathIsWithin(string $path, string $root): bool
     {
         $path = rtrim($path, DIRECTORY_SEPARATOR);

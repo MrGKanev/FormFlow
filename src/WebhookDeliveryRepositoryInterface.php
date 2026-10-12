@@ -6,6 +6,7 @@ namespace formflow;
 
 interface WebhookDeliveryRepositoryInterface
 {
+    /** @param array<string, mixed>|null $payload */
     public function record(
         string $formId,
         string $channel,

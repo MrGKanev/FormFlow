@@ -6,6 +6,26 @@ namespace formflow;
 
 use InvalidArgumentException;
 
+/**
+ * @phpstan-type UploadConfig array{enabled: bool, max_file_size_mb: int, max_files: int, allowed_extensions: list<string>}
+ * @phpstan-type AutoReplyConfig array{enabled: bool, subject: string, body: string}
+ * @phpstan-type FormConfig array{
+ *     name: string,
+ *     recipient: string,
+ *     allowed_origins: list<string>,
+ *     subject: string,
+ *     captcha_provider: string,
+ *     require_api_key: bool,
+ *     rate_limit_per_ip: array{max: int, window_minutes: int},
+ *     daily_limit: int,
+ *     delivery_channels: list<string>,
+ *     uploads: UploadConfig,
+ *     auto_reply: AutoReplyConfig,
+ *     success_redirect?: string,
+ *     notification_overrides?: array<string, string>,
+ *     blocked_patterns?: list<string>
+ * }
+ */
 final class FormConfigValidator
 {
     private const CAPTCHA_PROVIDERS = ['none', 'turnstile', 'hcaptcha', 'recaptcha', 'friendlycaptcha'];
@@ -20,7 +40,7 @@ final class FormConfigValidator
 
     /**
      * @param array<string, mixed> $input
-     * @return array{0: string, 1: array<string, mixed>}
+     * @return array{0: string, 1: FormConfig}
      */
     public static function fromAdminInput(array $input, ?string $fixedFormId = null): array
     {
@@ -87,7 +107,10 @@ final class FormConfigValidator
         return [$formId, $config];
     }
 
-    /** @param array<string, mixed> $config @return array<string, mixed> */
+    /**
+     * @param array<string, mixed> $config
+     * @return FormConfig
+     */
     public static function normalize(string $formId, array $config, bool $requireAllowedOrigins = false): array
     {
         self::assertFormId($formId);
@@ -161,7 +184,10 @@ final class FormConfigValidator
         return $normalized;
     }
 
-    /** @param array<string, mixed> $input @return array{enabled: bool, subject: string, body: string} */
+    /**
+     * @param array<string, mixed> $input
+     * @return array{enabled: bool, subject: string, body: string}
+     */
     private static function autoReplyFromAdminInput(array $input): array
     {
         return self::validateAutoReply(
@@ -200,7 +226,10 @@ final class FormConfigValidator
         return ['enabled' => $enabled, 'subject' => $subject, 'body' => $body];
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * @param array<string, mixed> $input
+     * @return UploadConfig
+     */
     private static function uploadsFromAdminInput(array $input): array
     {
         $allowedExtensions = array_map(
@@ -220,7 +249,7 @@ final class FormConfigValidator
         ];
     }
 
-    /** @return array<string, mixed> */
+    /** @return UploadConfig */
     private static function uploadsFromConfig(mixed $uploads): array
     {
         $uploads = is_array($uploads) ? $uploads : [];
@@ -250,7 +279,10 @@ final class FormConfigValidator
         )));
     }
 
-    /** @param array<string, mixed> $source @return list<string> */
+    /**
+     * @param array<string, mixed> $source
+     * @return list<string>
+     */
     private static function deliveryChannels(array $source): array
     {
         $channels = array_key_exists('delivery_channels', $source)
@@ -260,7 +292,10 @@ final class FormConfigValidator
         return self::deliveryChannelList($channels);
     }
 
-    /** @param array<string, mixed> $input @return array<string, string> */
+    /**
+     * @param array<string, mixed> $input
+     * @return array<string, string>
+     */
     private static function notificationOverrides(array $input): array
     {
         $overrides = [];

@@ -82,7 +82,10 @@ final class CurlCaptchaVerifier implements CaptchaVerifierInterface
         );
     }
 
-    /** @param array<string, string> $payload @param list<string> $headers */
+    /**
+     * @param array<string, string> $payload
+     * @param list<string> $headers
+     */
     private function postJson(string $url, array $payload, array $headers): bool
     {
         $headers[] = 'Content-Type: application/json';

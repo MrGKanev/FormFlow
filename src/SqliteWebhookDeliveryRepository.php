@@ -7,7 +7,7 @@ namespace formflow;
 use PDO;
 use RuntimeException;
 
-final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepositoryInterface
+final class SqliteWebhookDeliveryRepository implements ClaimedWebhookDeliveryRepositoryInterface
 {
     private PDO $pdo;
 
@@ -30,6 +30,7 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
         $this->createSchema();
     }
 
+    /** @param array<string, mixed>|null $payload */
     public function record(
         string $formId,
         string $channel,
@@ -82,7 +83,7 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
     public function due(int $limit = 100): array
     {
         $statement = $this->pdo->prepare(
-            'SELECT id, form_id, channel, status, attempts, error_message, created_at, sent_at, url, payload_json, next_attempt_at
+            'SELECT id, form_id, channel, status, attempts, error_message, created_at, sent_at, url, payload_json, next_attempt_at, delivery_id
              FROM webhook_deliveries
              WHERE status = :status
                AND url IS NOT NULL
@@ -106,6 +107,7 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
              SET locked_at = :now
              WHERE id = :id
                AND status = :status
+               AND (next_attempt_at IS NULL OR next_attempt_at <= :now)
                AND (locked_at IS NULL OR locked_at < :stale_cutoff)'
         );
 
@@ -117,6 +119,19 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
         ]);
 
         return $statement->rowCount() > 0;
+    }
+
+    public function claimDue(int $id): ?array
+    {
+        if (!$this->claim($id)) {
+            return null;
+        }
+
+        $statement = $this->pdo->prepare('SELECT * FROM webhook_deliveries WHERE id = :id');
+        $statement->execute(['id' => $id]);
+        $row = $statement->fetch();
+
+        return is_array($row) ? $row : null;
     }
 
     public function markQueuedSent(int $id, int $attempts): void
@@ -247,11 +262,14 @@ final class SqliteWebhookDeliveryRepository implements WebhookDeliveryRepository
         $columns = $this->pdo->query('PRAGMA table_info(webhook_deliveries)')->fetchAll();
         $columnNames = array_column($columns, 'name');
 
-        foreach (['url' => 'TEXT', 'payload_json' => 'TEXT', 'next_attempt_at' => 'TEXT', 'locked_at' => 'TEXT'] as $column => $type) {
+        foreach (['url' => 'TEXT', 'payload_json' => 'TEXT', 'next_attempt_at' => 'TEXT', 'locked_at' => 'TEXT', 'delivery_id' => 'TEXT'] as $column => $type) {
             if (!in_array($column, $columnNames, true)) {
                 $this->pdo->exec('ALTER TABLE webhook_deliveries ADD COLUMN ' . $column . ' ' . $type);
             }
         }
+
+        $this->pdo->exec("UPDATE webhook_deliveries SET delivery_id = 'ff-' || lower(hex(randomblob(16))) WHERE delivery_id IS NULL");
+        $this->pdo->exec("CREATE TRIGGER IF NOT EXISTS webhook_delivery_id AFTER INSERT ON webhook_deliveries WHEN NEW.delivery_id IS NULL BEGIN UPDATE webhook_deliveries SET delivery_id = 'ff-' || lower(hex(randomblob(16))) WHERE id = NEW.id; END");
 
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created_at ON webhook_deliveries(created_at)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_pending ON webhook_deliveries(status, next_attempt_at)');

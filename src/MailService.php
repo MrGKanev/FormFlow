@@ -56,6 +56,9 @@ final class MailService implements MailSenderInterface, AutoReplySenderInterface
         $this->mailer->send($email);
     }
 
+    /**
+     * @param array<string, string> $fields
+     */
     private function buildTextBody(array $fields): string
     {
         $lines = ['New formflow submission', ''];
@@ -71,6 +74,9 @@ final class MailService implements MailSenderInterface, AutoReplySenderInterface
         return implode(PHP_EOL, $lines);
     }
 
+    /**
+     * @param array<string, string> $fields
+     */
     private function buildHtmlBody(array $fields): string
     {
         $rows = '';

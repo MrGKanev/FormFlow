@@ -70,7 +70,10 @@ interface SubmissionRepositoryInterface
         ?string $dateTo = null
     ): iterable;
 
-    /** @param list<int> $ids @return list<array<string, mixed>> */
+    /**
+     * @param list<int> $ids
+     * @return list<array<string, mixed>>
+     */
     public function findByIds(array $ids): array;
 
     /** @return list<array<string, mixed>> */

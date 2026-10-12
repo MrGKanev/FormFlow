@@ -6,3 +6,6 @@
 /.phpunit.result.cache
 /storage/phpstan
 .DS_Store
+
+/storage/runtime/
+/storage/backups/

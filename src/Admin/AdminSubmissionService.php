@@ -19,15 +19,30 @@ final class AdminSubmissionService
     ) {
     }
 
-    /** @param mixed $value @return list<int> */
+    /**
+     * @param mixed $value
+     * @return list<int>
+     * @return list<int>
+     */
     public function selectedIds(mixed $value): array
     {
         $ids = is_array($value) ? $value : [$value];
 
-        return array_values(array_unique(array_filter(
-            array_map(static fn (mixed $id): int => (int) $id, $ids),
-            static fn (int $id): bool => $id > 0
-        )));
+        $selected = [];
+
+        foreach ($ids as $id) {
+            if (!is_int($id) && !is_string($id)) {
+                continue;
+            }
+
+            $validated = filter_var($id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+
+            if ($validated !== false) {
+                $selected[] = $validated;
+            }
+        }
+
+        return array_values(array_unique($selected));
     }
 
     /** @param array<string, mixed> $submission */

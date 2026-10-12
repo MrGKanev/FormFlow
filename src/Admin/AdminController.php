@@ -23,6 +23,10 @@ final class AdminController
 {
     private readonly AdminSettingsService $settingsService;
 
+    /**
+     * @param list<string> $configuredIps
+     * @param array<string, array<string, mixed>> $forms
+     */
     public function __construct(
         private readonly AdminAuth $auth,
         private readonly AdminIpWhitelistInterface $ipWhitelist,
@@ -148,6 +152,9 @@ final class AdminController
         return $this->htmlResponse(404, '<h1>Not found</h1>');
     }
 
+    /**
+     * @return array{status: int, body: mixed, redirect?: string|null, headers?: array<string, string>}
+     */
     private function handleLogin(): array
     {
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -191,6 +198,9 @@ final class AdminController
         return ['status' => 302, 'body' => '', 'redirect' => '/admin'];
     }
 
+    /**
+     * @return array{status: int, body: mixed, redirect?: string|null, headers?: array<string, string>}
+     */
     private function handleWhitelist(): array
     {
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -242,6 +252,9 @@ final class AdminController
         ], 'IP whitelist');
     }
 
+    /**
+     * @param array<string, mixed> $data
+     */
     private function render(string $view, array $data, string $title, bool $withNav = true): string
     {
         return $this->renderer()->render($view, $data, $title, $withNav);
@@ -326,6 +339,9 @@ final class AdminController
         $this->settingsService->writeSecurityConfig($blockedIps, $trustedProxies, $trustedHeaders);
     }
 
+    /**
+     * @return array{status: int, body: mixed, redirect?: string|null, headers?: array<string, string>}
+     */
     private function handleUsers(): array
     {
         if ($this->adminUsers === null) {
@@ -382,6 +398,9 @@ final class AdminController
         ], 'Admin users');
     }
 
+    /**
+     * @return array{status: int, body: mixed, redirect?: string|null, headers?: array<string, string>}
+     */
     private function handleAudit(): array
     {
         $perPage = 50;
@@ -394,6 +413,9 @@ final class AdminController
         ], 'Audit log'));
     }
 
+    /**
+     * @return array{status: int, body: mixed, redirect?: string|null, headers?: array<string, string>}
+     */
     private function handleSystem(): array
     {
         $system = new AdminSystemService(
@@ -412,6 +434,9 @@ final class AdminController
         ], 'System status'));
     }
 
+    /**
+     * @return array{status: int, body: mixed, redirect?: string|null, headers?: array<string, string>}
+     */
     private function handleRecovery(): array
     {
         // A GET with ?token= only ever happens once (the emailed/CLI link). Move it into the
@@ -472,6 +497,9 @@ final class AdminController
         ], 'Recovery', withNav: false));
     }
 
+    /**
+     * @return array{status: int, body: mixed, redirect?: string|null, headers?: array<string, string>}
+     */
     private function handleBackup(): array
     {
         if (!$this->verifyCsrfToken()) {
@@ -495,15 +523,22 @@ final class AdminController
             return $this->htmlResponse(422, '<h1>Backup file is not a SQLite database.</h1>');
         }
 
-        $this->recordAudit('backup.download', 'Downloaded SQLite backup.');
+        try {
+            $this->recordAudit('backup.download', 'Downloaded SQLite backup.');
+            $content = $backup->snapshotDatabase($path);
+        } catch (Throwable $exception) {
+            error_log($exception->__toString());
+            return $this->htmlResponse(503, '<h1>Backup is temporarily unavailable.</h1>');
+        }
 
         return [
             'status' => 200,
-            'body' => (string) file_get_contents($path),
+            'body' => $content,
             'redirect' => null,
             'headers' => [
                 'Content-Type' => 'application/octet-stream',
                 'Content-Disposition' => 'attachment; filename="formflow-submissions.sqlite"',
+                'Cache-Control' => 'no-store',
             ],
         ];
     }
@@ -531,6 +566,9 @@ final class AdminController
         return $this->root ?? dirname(__DIR__, 2);
     }
 
+    /**
+     * @return array{status: int, body: mixed, redirect?: string|null, headers?: array<string, string>}
+     */
     private function handleConfigExport(): array
     {
         if (!$this->verifyCsrfToken()) {
@@ -555,6 +593,9 @@ final class AdminController
         ];
     }
 
+    /**
+     * @return array{status: int, body: mixed, redirect?: string|null, headers?: array<string, string>}
+     */
     private function handleConfigImport(): array
     {
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -655,27 +696,6 @@ final class AdminController
         $this->auditLog?->record($this->auth->username(), $action, $detail);
     }
 
-    /** @return list<string> */
-    private function lines(string $value): array
-    {
-        $lines = preg_split('/\R/', $value) ?: [];
-        $result = [];
-
-        foreach ($lines as $line) {
-            $line = trim($line);
-
-            if ($line === '') {
-                continue;
-            }
-
-            if (!in_array($line, $result, true)) {
-                $result[] = $line;
-            }
-        }
-
-        return $result;
-    }
-
     private function verifyCsrfToken(): bool
     {
         $token = (string) ($_POST['csrf_token'] ?? '');
@@ -722,6 +742,9 @@ final class AdminController
         return hash_hmac('sha256', $ip . '|' . Clock::currentMonth(), $this->ipHashSecret);
     }
 
+    /**
+     * @return array{status: int, body: mixed, redirect?: string|null, headers?: array<string, string>}
+     */
     private function htmlResponse(int $status, string $body): array
     {
         return ['status' => $status, 'body' => $body, 'redirect' => null];

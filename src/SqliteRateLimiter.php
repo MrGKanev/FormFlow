@@ -36,6 +36,28 @@ final class SqliteRateLimiter implements RateLimiterInterface
         $this->createSchema();
     }
 
+    /** @return 'ip'|'daily'|null */
+    public function consume(string $formId, ?string $ipHash, int $windowMinutes, int $ipMaximum, int $dailyMaximum): ?string
+    {
+        // Reserve the writer lock before recording/counting so simultaneous
+        // requests see a distinct position in the limit window.
+        $this->pdo->exec('BEGIN IMMEDIATE');
+        try {
+            $this->hit($formId, $ipHash);
+            $exceeded = null;
+            if ($this->countRecentHitsByIp($formId, $ipHash, $windowMinutes) > $ipMaximum) {
+                $exceeded = 'ip';
+            } elseif ($this->countRecentHitsForForm($formId, 1440) > $dailyMaximum) {
+                $exceeded = 'daily';
+            }
+            $this->pdo->exec('COMMIT');
+            return $exceeded;
+        } catch (\Throwable $exception) {
+            $this->pdo->exec('ROLLBACK');
+            throw $exception;
+        }
+    }
+
     public function hit(string $formId, ?string $ipHash): void
     {
         $this->pruneOldHits();

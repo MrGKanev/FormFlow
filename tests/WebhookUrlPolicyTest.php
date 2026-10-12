@@ -19,6 +19,23 @@ final class WebhookUrlPolicyTest extends TestCase
         $this->assertNull($error);
     }
 
+    public function testPublicIpv6LiteralDoesNotRequireDnsResolution(): void
+    {
+        $result = WebhookUrlPolicy::resolve('https://[2606:4700:4700::1111]/webhook', static function (string $host): array {
+            self::fail('Literal IPv6 addresses must not be resolved through DNS.');
+        });
+
+        $this->assertNull($result['error']);
+        $this->assertSame(['2606:4700:4700::1111'], $result['ips']);
+    }
+
+    public function testRejectsPrivateIpv6Literals(): void
+    {
+        foreach (['::1', 'fd00::1', 'fe80::1'] as $ip) {
+            $this->assertSame('Webhook destination is not allowed.', WebhookUrlPolicy::validate('https://[' . $ip . ']/webhook'));
+        }
+    }
+
     public function testRejectsLocalhostDestination(): void
     {
         $error = WebhookUrlPolicy::validate(
@@ -37,6 +54,25 @@ final class WebhookUrlPolicyTest extends TestCase
         );
 
         $this->assertSame('Webhook destination is not allowed.', $error);
+    }
+
+    public function testRejectsNonPublicAndMulticastResolvedAddresses(): void
+    {
+        foreach (['100.64.0.1', '100.127.255.254', '224.0.0.1', 'ff02::1'] as $ip) {
+            $this->assertSame(
+                'Webhook destination is not allowed.',
+                WebhookUrlPolicy::validate('https://hooks.example.test/webhook', static fn (string $host): array => [$ip]),
+                $ip
+            );
+        }
+    }
+
+    public function testMixedPublicAndPrivateAnswersAreRejected(): void
+    {
+        $this->assertSame(
+            'Webhook destination is not allowed.',
+            WebhookUrlPolicy::validate('https://hooks.example.test/webhook', static fn (string $host): array => ['93.184.216.34', '10.0.0.1'])
+        );
     }
 
     public function testRejectsCredentialsInUrl(): void

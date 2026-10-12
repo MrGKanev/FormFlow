@@ -8,3 +8,6 @@ storage/uploads/*
 docs/superpowers
 .superpowers
 .remember
+
+storage/runtime/*
+storage/backups/

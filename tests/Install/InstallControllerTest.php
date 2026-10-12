@@ -71,6 +71,34 @@ final class InstallControllerTest extends TestCase
         ];
     }
 
+    public function testInstallationPreservesDanglingEnvSymlink(): void
+    {
+        $directory = sys_get_temp_dir() . '/formflow-install-link-' . bin2hex(random_bytes(6));
+        mkdir($directory);
+        $target = $directory . '/runtime.env';
+        symlink(basename($target), $directory . '/.env');
+        $originalEnvPath = $this->envPath;
+        $this->envPath = $directory . '/.env';
+
+        try {
+            $controller = $this->makeController();
+            $this->assertSame(200, $controller->handle()['status']);
+            $_SERVER['REQUEST_METHOD'] = 'POST';
+            $_POST = $this->validPayload() + ['csrf_token' => $this->csrfToken()];
+            $this->assertSame(302, $controller->handle()['status']);
+            $this->assertTrue(is_link($this->envPath));
+            $this->assertFileExists($target);
+            $this->assertStringContainsString("ADMIN_USERNAME='admin'", (string) file_get_contents($target));
+        } finally {
+            unlink($this->envPath);
+            if (is_file($target)) {
+                unlink($target);
+            }
+            rmdir($directory);
+            $this->envPath = $originalEnvPath;
+        }
+    }
+
     public function testGetRendersForm(): void
     {
         $controller = $this->makeController();

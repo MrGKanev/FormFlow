@@ -24,7 +24,9 @@ final class MailDeliveryWorker
         return $this->deliver($this->submissions->findPendingMail($limit, $includeFailed));
     }
 
-    /** Retries only submissions already marked 'failed', without picking up fresh pending mail. */
+    /** Retries only submissions already marked 'failed', without picking up fresh pending mail.
+     * @return array{attempted: int, sent: int, failed: int, skipped: int}
+     */
     public function retryFailed(int $limit = 100): array
     {
         return $this->deliver($this->submissions->findFailed($limit));

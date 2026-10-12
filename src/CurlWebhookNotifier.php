@@ -23,10 +23,15 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
         $this->transport = $transport ?? new CurlWebhookTransport();
     }
 
+    /**
+     * @param array<string, mixed> $fields
+     * @param list<string>|null $channels
+     * @param array<string, string> $overrides
+     */
     public function notify(string $formId, array $fields, ?array $channels = null, array $overrides = []): void
     {
         $summary = $this->summary($formId, $fields);
-        $selectedChannels = array_flip($channels ?? []);
+        $selectedChannels = array_fill_keys($channels ?? [], true);
         $discordUrl = $this->overrideValue($overrides, 'discord_webhook_url') ?? $this->discordUrl;
         $slackUrl = $this->overrideValue($overrides, 'slack_webhook_url') ?? $this->slackUrl;
         $genericWebhookUrl = $this->overrideValue($overrides, 'generic_webhook_url') ?? $this->genericWebhookUrl;
@@ -105,12 +110,19 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
         }
 
         $error = null;
+        $deliveryId = 'ff-' . bin2hex(random_bytes(16));
+        $attempts = 0;
 
         for ($attempt = 1; $attempt <= self::MAX_ATTEMPTS; $attempt++) {
+            $attempts = $attempt;
             try {
-                $error = $this->transport->postJson($url, $payload);
+                $result = $this->transport instanceof DetailedWebhookTransportInterface
+                    ? $this->transport->deliver($url, $payload, $deliveryId)
+                    : new WebhookTransportResult($this->transport->postJson($url, $payload));
+                $error = $result->error;
             } catch (\Throwable $exception) {
                 $error = $exception->getMessage();
+                $result = new WebhookTransportResult($error);
             }
 
             if ($error === null) {
@@ -118,12 +130,18 @@ final class CurlWebhookNotifier implements WebhookNotifierInterface
                 return;
             }
 
+            // A synchronous request cannot wait minutes or hours. Leave a failed
+            // log for explicit replay instead of retrying ahead of receiver advice.
+            if (!$result->retryable || ($result->retryAfterSeconds ?? 0) > 0) {
+                break;
+            }
+
             if ($attempt < self::MAX_ATTEMPTS) {
                 usleep($attempt * 200000);
             }
         }
 
-        $this->deliveries?->record($formId, $channel, 'failed', self::MAX_ATTEMPTS, $error, $url, $payload);
+        $this->deliveries?->record($formId, $channel, 'failed', $attempts, $error, $url, $payload);
     }
 
 }

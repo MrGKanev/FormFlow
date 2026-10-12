@@ -92,6 +92,9 @@ final class AppFactory
         return $normalized;
     }
 
+    /**
+     * @param array<string, array<string, mixed>> $forms
+     */
     public function adminController(array $forms, ?string $clientIp, bool $databaseExistedAtRequestStart = true): AdminController
     {
         $databasePath = $this->databasePath();
@@ -142,6 +145,9 @@ final class AppFactory
         );
     }
 
+    /**
+     * @param array<string, array<string, mixed>> $forms
+     */
     public function formHandler(array $forms, ?string $clientIp): FormHandler
     {
         $databasePath = $this->databasePath();

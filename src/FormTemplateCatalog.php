@@ -73,7 +73,10 @@ final class FormTemplateCatalog
         ];
     }
 
-    /** @param array<string, mixed> $input @return array<string, mixed> */
+    /**
+     * @param array<string, mixed> $input
+     * @return array<string, mixed>
+     */
     public static function apply(array $input): array
     {
         if ((string) ($input['template_applied'] ?? '') === '1') {

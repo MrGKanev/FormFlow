@@ -20,7 +20,9 @@ RUN composer install --no-dev --prefer-dist --no-interaction --no-progress --opt
 COPY . .
 COPY deploy/apache-formflow.conf /etc/apache2/sites-available/000-default.conf
 
-RUN mkdir -p storage/uploads \
-    && chown -R www-data:www-data storage
+RUN mkdir -p storage/uploads storage/runtime \
+    && ln -s storage/runtime/.env .env \
+    && chown -R www-data:www-data storage config \
+    && chown -h www-data:www-data .env
 
 USER www-data

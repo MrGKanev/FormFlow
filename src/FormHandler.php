@@ -8,9 +8,14 @@ use InvalidArgumentException;
 use RuntimeException;
 use Throwable;
 
+/** @phpstan-type StoredUpload array{type: 'upload', original_name: string, stored_name: string, size_bytes: int, mime_type: string} */
 final class FormHandler
 {
     private const MAX_TEXT_FIELDS = 100;
+
+    /**
+     * @param array<string, array<string, mixed>> $forms
+     */
     public function __construct(
         private readonly array $forms,
         private readonly MailSenderInterface $mailService,
@@ -68,7 +73,7 @@ final class FormHandler
         $textFields = $this->extractFields($_POST);
         $fields = array_merge(
             $textFields,
-            $this->extractUploadedFiles($_FILES, $config['uploads'] ?? [])
+            $this->extractUploadedFiles($_FILES, $config['uploads'])
         );
 
         try {
@@ -107,6 +112,8 @@ final class FormHandler
             $rateLimitResponse = $this->rateLimitResponse($formId, $ipHash, $config);
 
             if ($rateLimitResponse !== null) {
+                $this->deleteStoredUploads($fields);
+
                 return $rateLimitResponse;
             }
 
@@ -126,7 +133,7 @@ final class FormHandler
             try {
                 $this->mailService->send(
                     (string) $config['recipient'],
-                    (string) ($config['subject'] ?? 'New form submission'),
+                    $config['subject'],
                     SubmissionPayloadFormatter::displayFields($fields)
                 );
 
@@ -163,6 +170,9 @@ final class FormHandler
         );
     }
 
+    /**
+     * @param array<string, mixed> $config
+     */
     private function assertAllowedOrigin(array $config): void
     {
         $allowedOrigins = $config['allowed_origins'] ?? [];
@@ -173,8 +183,12 @@ final class FormHandler
 
         $origin = $_SERVER['HTTP_ORIGIN'] ?? null;
 
-        if (is_string($origin) && in_array($origin, $allowedOrigins, true)) {
-            return;
+        if (is_string($origin)) {
+            if (in_array($origin, $allowedOrigins, true)) {
+                return;
+            }
+
+            throw new InvalidArgumentException('Origin is not allowed.');
         }
 
         $referer = $_SERVER['HTTP_REFERER'] ?? null;
@@ -213,6 +227,9 @@ final class FormHandler
         }
     }
 
+    /**
+     * @param array<string, mixed> $config
+     */
     private function captchaProvider(array $config): string
     {
         $provider = (string) ($config['captcha_provider'] ?? '');
@@ -233,6 +250,10 @@ final class FormHandler
         };
     }
 
+    /**
+     * @param array<string, mixed> $input
+     * @return array<string, string>
+     */
     private function extractFields(array $input): array
     {
         $result = [];
@@ -265,23 +286,28 @@ final class FormHandler
     }
 
     /** @param array<string, mixed> $config */
-    private function rateLimitResponse(string $formId, string $ipHash, array $config): ?HttpResponse
+    private function rateLimitResponse(string $formId, ?string $ipHash, array $config): ?HttpResponse
     {
-        $this->rateLimiter->hit($formId, $ipHash);
         $perIpLimit = array_merge(['max' => 5, 'window_minutes' => 10], $config['rate_limit_per_ip'] ?? []);
 
-        if ($this->rateLimiter->countRecentHitsByIp($formId, $ipHash, (int) $perIpLimit['window_minutes']) > (int) $perIpLimit['max']) {
+        $exceeded = $this->rateLimiter->consume($formId, $ipHash, (int) $perIpLimit['window_minutes'], (int) $perIpLimit['max'], (int) ($config['daily_limit'] ?? 200));
+
+        if ($exceeded === 'ip') {
             return HttpResponse::json(429, ['success' => false, 'message' => 'Too many submissions. Please try again later.']);
         }
 
-        if ($this->rateLimiter->countRecentHitsForForm($formId, 1440) > (int) ($config['daily_limit'] ?? 200)) {
+        if ($exceeded === 'daily') {
             return HttpResponse::json(429, ['success' => false, 'message' => 'Daily submission limit reached for this form.']);
         }
 
         return null;
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * @param array<string, mixed> $files
+     * @param array<string, mixed> $policy
+     * @return array<string, StoredUpload>
+     */
     private function extractUploadedFiles(array $files, array $policy): array
     {
         if ($files === [] || $this->uploadDirectory === '') {
@@ -339,7 +365,10 @@ final class FormHandler
         return $stored;
     }
 
-    /** @return array<string, array{name: string, tmp_name: string, error: int, size: int}> */
+    /**
+     * @param array<string, mixed> $files
+     * @return array<string, array{name: string, tmp_name: string, error: int, size: int}>
+     */
     private function uploadedFileEntries(array $files): array
     {
         $entries = [];
@@ -365,7 +394,7 @@ final class FormHandler
             $entries[(string) $field] = [
                 'name' => (string) ($file['name'] ?? ''),
                 'tmp_name' => (string) ($file['tmp_name'] ?? ''),
-                'error' => (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE),
+                'error' => (int) $file['error'],
                 'size' => (int) ($file['size'] ?? 0),
             ];
         }
@@ -373,7 +402,10 @@ final class FormHandler
         return $entries;
     }
 
-    /** @param array{name: string, tmp_name: string, error: int, size: int} $file @param array<string, mixed> $policy */
+    /**
+     * @param array{name: string, tmp_name: string, error: int, size: int} $file
+     * @param array<string, mixed> $policy
+     */
     private function validateUploadedFile(string $field, array $file, array $policy): void
     {
         if ($file['error'] !== UPLOAD_ERR_OK) {
@@ -448,7 +480,10 @@ final class FormHandler
         }
     }
 
-    /** @param array{name: string, tmp_name: string, error: int, size: int} $file @param array<string, mixed> $stored */
+    /**
+     * @param array{name: string, tmp_name: string, error: int, size: int} $file
+     * @param array<string, StoredUpload> $stored
+     */
     private function storeUploadedFile(string $field, array $file, array &$stored): void
     {
         $safeName = preg_replace('/[^A-Za-z0-9._-]+/', '-', basename($file['name'])) ?: 'upload.bin';
@@ -507,6 +542,9 @@ final class FormHandler
         ], true);
     }
 
+    /**
+     * @param array<string, mixed> $fields
+     */
     private function validateEmailField(array $fields): void
     {
         if (!isset($fields['email']) || $fields['email'] === '') {

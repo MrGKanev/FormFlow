@@ -488,34 +488,6 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         UploadFileCleaner::deletePayloadUploads($payload, $this->uploadDirectory);
     }
 
-    /** @param array<string, mixed> $upload */
-    private function uploadBasename(array $upload): ?string
-    {
-        $storedName = trim((string) ($upload['stored_name'] ?? ''));
-
-        if ($storedName === '' && isset($upload['relative_path'])) {
-            $storedName = basename((string) $upload['relative_path']);
-        }
-
-        if ($storedName === '' || $storedName !== basename($storedName)) {
-            return null;
-        }
-
-        return $storedName;
-    }
-
-    private function pathIsWithin(string $path, string $root): bool
-    {
-        $rootPath = realpath($root);
-        $realPath = realpath($path);
-
-        if ($rootPath === false || $realPath === false) {
-            return false;
-        }
-
-        return $realPath === $rootPath || str_starts_with($realPath, rtrim($rootPath, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR);
-    }
-
     /** @return array{0: string, 1: array<string, string>} */
     private function buildFilter(
         ?string $formId,
@@ -593,7 +565,11 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         $this->createSearchIndex();
     }
 
-    /** @param list<int> $ids @return list<int> */
+    /**
+     * @param list<int> $ids
+     * @return list<int>
+     * @return list<int>
+     */
     private function validIds(array $ids): array
     {
         return array_values(array_unique(array_filter(array_map('intval', $ids), static fn (int $id): bool => $id > 0)));

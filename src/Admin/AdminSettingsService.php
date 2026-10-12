@@ -73,7 +73,11 @@ final class AdminSettingsService
         return new SettingsSnapshot($this->currentSettings());
     }
 
-    /** @param array<string, mixed> $input @return array<string, mixed> */
+    /**
+     * @param array<string, mixed> $input
+     * @return array<string, mixed>
+     * @param array<string, mixed> $input
+     */
     public function settingsFromInput(array $input): array
     {
         $appEnv = (string) ($input['app_env'] ?? 'production');
@@ -245,7 +249,11 @@ final class AdminSettingsService
         );
     }
 
-    /** @param array<string, mixed> $input @return array<string, string> */
+    /**
+     * @param array<string, mixed> $input
+     * @return array<string, string>
+     * @param array<string, mixed> $input
+     */
     public function integrationSettingsFromInput(array $input): array
     {
         $fields = [
@@ -589,8 +597,30 @@ final class AdminSettingsService
         return $scheme === 'http' || $scheme === 'https';
     }
 
+    private function writableConfigPath(string $path): string
+    {
+        for ($depth = 0; is_link($path); $depth++) {
+            if ($depth >= 16) {
+                throw new InvalidArgumentException('Config symlink chain is too long.');
+            }
+
+            $target = readlink($path);
+
+            if ($target === false) {
+                throw new InvalidArgumentException('Unable to resolve the config symlink.');
+            }
+
+            $path = str_starts_with($target, DIRECTORY_SEPARATOR)
+                ? $target
+                : dirname($path) . DIRECTORY_SEPARATOR . $target;
+        }
+
+        return $path;
+    }
+
     private function atomicWrite(string $path, string $content): void
     {
+        $path = $this->writableConfigPath($path);
         $directory = dirname($path);
         $temporaryPath = tempnam($directory, basename($path) . '.tmp.');
 
@@ -599,8 +629,13 @@ final class AdminSettingsService
         }
 
         try {
-            file_put_contents($temporaryPath, $content);
-            rename($temporaryPath, $path);
+            if (file_put_contents($temporaryPath, $content) !== strlen($content)) {
+                throw new InvalidArgumentException('Unable to write the config file.');
+            }
+
+            if (!rename($temporaryPath, $path)) {
+                throw new InvalidArgumentException('Unable to replace the config file.');
+            }
         } finally {
             if (is_file($temporaryPath)) {
                 unlink($temporaryPath);

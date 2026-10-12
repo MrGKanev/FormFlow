@@ -6,7 +6,9 @@ namespace formflow;
 
 final class HttpsDetector
 {
-    /** @param list<string> $trustedProxies */
+    /** @param list<string> $trustedProxies
+     * @param array<string, mixed> $server
+     */
     public function isHttps(array $server, array $trustedProxies = []): bool
     {
         if (!empty($server['HTTPS']) && $server['HTTPS'] !== 'off') {

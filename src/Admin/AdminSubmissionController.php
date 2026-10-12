@@ -97,7 +97,12 @@ final class AdminSubmissionController
 
         $originalName = trim((string) ($upload['original_name'] ?? 'upload'));
         $originalName = $originalName !== '' ? basename($originalName) : 'upload';
+        $originalName = preg_replace('/[\x00-\x1F\x7F]/', '_', $originalName) ?? 'upload';
         $mimeType = trim((string) ($upload['mime_type'] ?? 'application/octet-stream'));
+
+        if (preg_match('~^[a-zA-Z0-9!#$&^_.+-]+/[a-zA-Z0-9!#$&^_.+-]+$~D', $mimeType) !== 1) {
+            $mimeType = 'application/octet-stream';
+        }
         $this->recordAudit('submission.upload_download', 'Downloaded upload "' . $field . '" from submission #' . $id . '.');
 
         return [
@@ -105,7 +110,7 @@ final class AdminSubmissionController
             'body' => (string) file_get_contents($path),
             'redirect' => null,
             'headers' => [
-                'Content-Type' => $mimeType !== '' ? $mimeType : 'application/octet-stream',
+                'Content-Type' => $mimeType,
                 'Content-Disposition' => 'attachment; filename="' . addcslashes($originalName, "\\\"") . '"',
                 'X-Content-Type-Options' => 'nosniff',
             ],
@@ -311,7 +316,11 @@ final class AdminSubmissionController
         return str_contains("=+-@\t\r", $value[0]) ? "'" . $value : $value;
     }
 
-    /** @param list<array<string, mixed>> $rows @return array<string, mixed> */
+    /**
+     * @param list<array<string, mixed>> $rows
+     * @return array<string, mixed>
+     * @return array{status: int, body: mixed, redirect?: string|null, headers?: array<string, string>}
+     */
     private function csvResponse(array $rows, string $filename = 'formflow-submissions.csv'): array
     {
         $csv = fopen('php://temp', 'r+');
@@ -350,7 +359,11 @@ final class AdminSubmissionController
         ];
     }
 
-    /** @param iterable<array<string, mixed>> $rows @return array<string, mixed> */
+    /**
+     * @param iterable<array<string, mixed>> $rows
+     * @return array<string, mixed>
+     * @return array{status: int, body: mixed, redirect?: string|null, headers?: array<string, string>}
+     */
     private function streamCsvResponse(iterable $rows): array
     {
         return [
@@ -414,7 +427,15 @@ final class AdminSubmissionController
 
     private function uploadedFilePath(string $storedName): ?string
     {
-        $uploadRoot = realpath($this->uploadDirectory) ?: $this->uploadDirectory;
+        if ($this->uploadDirectory === '') {
+            return null;
+        }
+
+        $uploadRoot = realpath($this->uploadDirectory);
+
+        if ($uploadRoot === false || !is_dir($uploadRoot)) {
+            return null;
+        }
         $realPath = realpath($uploadRoot . DIRECTORY_SEPARATOR . $storedName);
 
         if ($realPath === false || !$this->pathIsWithin($realPath, $uploadRoot)) {

@@ -154,7 +154,7 @@ Then run the mail worker from cron:
 php bin/formflow mail:work --limit=100
 ```
 
-Each worker run records a heartbeat under `storage/runtime`, which is shown on `/admin/system`.
+Each worker run records its status, summary, last run and last successful run under `storage/runtime`, which is shown on `/admin/system`. A successful worker run means the run completed without terminal delivery failures; pending retries and individual delivery outcomes are reported separately.
 
 Webhook delivery can stay synchronous, or be queued by setting:
 
@@ -174,18 +174,47 @@ Example cron entries:
 * * * * * cd /var/www/formflow && php bin/formflow mail:work --limit=100 >/dev/null 2>&1
 * * * * * cd /var/www/formflow && php bin/formflow webhooks:retry --limit=100 >/dev/null 2>&1
 15 3 * * * cd /var/www/formflow && php bin/formflow retention:prune --days=180 >/dev/null 2>&1
-0 3 * * * sqlite3 /var/www/formflow/storage/submissions.sqlite ".backup '/backup/formflow-$(date +\%F).sqlite'"
 ```
+
+In queue mode, webhooks have at most three attempts. Network failures, HTTP 408/429 and 5xx responses retry; other HTTP failures finish immediately. Retry delays use exponential equal jitter (30–60 seconds after the first attempt, 60–120 after the second), capped at one hour. Valid `Retry-After` seconds or HTTP dates increase the delay, bounded to 24 hours. Redirects are not followed. Malformed stored payloads, including nonempty top-level JSON arrays or numeric top-level keys, fail without an outbound request. See [HTTP Retry-After semantics](https://www.rfc-editor.org/rfc/rfc9110.html#section-10.2.3).
+
+Queued requests include `X-FormFlow-Delivery-ID`. The persisted random ID stays the same for automatic retries and crash recovery; receivers should retain processed IDs to avoid duplicate effects. Manual replay creates a new ID and requests another delivery. Delivery is at least once: a crash after receiver acceptance can resend the same ID, and receivers must implement deduplication to obtain that protection.
+
+Synchronous library use also sends a stable ID across its immediate attempts and stops on permanent HTTP failures or a positive `Retry-After`, recording a failure for manual replay. Queue mode is recommended for scheduled retries that respect receiver delays.
+
+### Delivery monitoring
+
+```bash
+php bin/formflow delivery:status
+php bin/formflow delivery:check
+```
+
+Both commands emit JSON and exit with `0` when healthy or `1` when unhealthy. The snapshot includes pending/failed counts, the oldest pending delivery and its age, worker status and the last successful run. Pending work alerts when its age reaches `DELIVERY_QUEUE_MAX_AGE_SECONDS` (default 900), or a successful worker run is missing/stale according to `DELIVERY_WORKER_MAX_AGE_SECONDS` (default 900). Failed deliveries alert at `DELIVERY_FAILED_THRESHOLD` (default 1); a failed worker run also alerts.
+
+For external monitoring, set a private random `OPERATIONS_API_TOKEN` and use HTTPS:
+
+```bash
+curl 'https://forms.example.com/api/delivery-status' \
+  -H "Authorization: Bearer $OPERATIONS_API_TOKEN"
+```
+
+The protected GET endpoint returns the same status, disables caching, and responds with HTTP 503 when unhealthy. An empty token disables access. `/health` remains the public liveness check.
+
+Optional email alerts require configured SMTP and `DELIVERY_ALERT_EMAIL`. Schedule `php bin/formflow delivery:check --notify` to send alerts; notification is opt-in, repeated incidents are suppressed for one hour, and recovery sends an update. Monitor the command's exit status independently because SMTP delivery can fail during an incident.
 
 ## Deployment
 
 Docker:
 
 ```bash
+mkdir -p storage/runtime storage/uploads
+# If you already have a configured .env:
+# cp .env storage/runtime/.env
+sudo chown -R 33:33 storage
 docker compose up -d --build
 ```
 
-The included image serves `public/` through Apache and mounts `storage/` for SQLite/uploads. For PHP-FPM/nginx installs, use `deploy/nginx.conf` as a starting point and keep `storage/` outside the web root.
+The included image serves `public/` through Apache with a read-only root filesystem. The writable `storage/` mount holds SQLite/uploads and `storage/runtime/.env`; the image links `.env` to that persistent file so installation and Settings can save configuration atomically. The named `formflow-config` volume persists PHP configuration files. Do not remove that volume when recreating the container. Keep the host storage directory writable by the container's `www-data` user (UID/GID 33). Container environment variables can override `.env`, so avoid duplicating Settings-managed values there. For PHP-FPM/nginx installs, use `deploy/nginx.conf` as a starting point and keep `storage/` outside the web root.
 
 ## Configuration
 
@@ -198,7 +227,7 @@ The included image serves `public/` through Apache and mounts `storage/` for SQL
   - Slack: `SLACK_WEBHOOK_URL`
   - Telegram: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
   - Generic webhook: `GENERIC_WEBHOOK_URL`; receives `{"form_id":"…","fields":{…}}`, which works with Zapier, Make, n8n, or a custom service.
-  Each form selects which delivery channels receive its submissions. New forms start with no selected delivery channels. A form can override the global Discord, Slack, Telegram, or generic webhook settings when it needs a form-specific destination; blank override fields use the global integration settings. If no delivery channels are selected, no integration notifications are sent. Every webhook delivery attempt is retried up to three times in sync mode, or by `webhooks:retry` in queue mode, and the final result is visible in `/admin/delivery`. Delivery notifications never prevent a successfully stored submission from being accepted.
+  Each form selects which delivery channels receive its submissions. New forms start with no selected delivery channels. A form can override the global Discord, Slack, Telegram, or generic webhook settings when it needs a form-specific destination; blank override fields use the global integration settings. If no delivery channels are selected, no integration notifications are sent. Webhooks use up to two total attempts in sync mode or three through `webhooks:retry` in queue mode, and the final result is visible in `/admin/delivery`. Delivery notifications never prevent a successfully stored submission from being accepted.
 - File uploads are accepted from multipart forms and stored under `storage/uploads`; payloads store metadata only: original filename, stored basename, size, and MIME type. Admin users download uploads through the submission detail page instead of exposing filesystem paths. Deleting submissions or running retention cleanup removes attached upload files as well. Configure per-form size, count, and extension rules before exposing an upload field in the form markup. Dangerous executable/script extensions are rejected even without an allow-list, and common file types are checked with MIME detection when PHP's `fileinfo` support is available.
 - CAPTCHA providers are configured on `/admin/settings?tab=protection`: Cloudflare Turnstile (`TURNSTILE_SECRET`, `TURNSTILE_SITE_KEY`), hCaptcha (`HCAPTCHA_SECRET`, `HCAPTCHA_SITE_KEY`), Google reCAPTCHA v2 (`RECAPTCHA_SECRET`, `RECAPTCHA_SITE_KEY`), and Friendly Captcha (`FRIENDLY_CAPTCHA_API_KEY`, `FRIENDLY_CAPTCHA_SITE_KEY`). Form snippets include the matching widget script when the selected provider has a site key.
 - Admin 2FA uses TOTP secrets (`ADMIN_TOTP_SECRET` for the bootstrap user, optional TOTP secret for DB-backed users).
@@ -213,20 +242,18 @@ Allowed origins/referer, honeypot field (`_website`), selectable CAPTCHA provide
 
 ### Backup
 
-Minimal backup:
+Create a complete data archive outside the public web root:
 
 ```bash
-sqlite3 storage/submissions.sqlite \
-    ".backup '/backup/formflow-submissions.sqlite'"
+php bin/formflow backup:create --output=/private/backups/formflow.tar
+php bin/formflow backup:restore --input=/private/backups/formflow.tar --target=/empty/restore-directory
 ```
 
-Example cron entry:
+All CLI commands accept `--root=/application` to select the installation. Stop incoming submissions and workers while creating the archive so the SQLite snapshot, uploaded files and configuration represent the same point in time. The archive includes the database, uploads, configuration and environment credentials. Keep it private, restrict access and apply a retention policy; it is not encrypted.
 
-```cron
-0 3 * * * sqlite3 /var/www/formflow/storage/submissions.sqlite ".backup '/backup/formflow-$(date +\%F).sqlite'"
-```
+Restore requires an empty target and validates the archive before extracting. The archive contains application data, not application code or dependencies: deploy the matching application version separately, place the restored data/configuration in that installation, and set ownership for the web/worker user before starting services. For Docker, restore persistent configuration and storage mounts as well as the environment file.
 
-Periodically delete old backup files.
+Regularly restore into an isolated empty directory and verify a known submission, its upload and the configuration before trusting a backup. Automated tests cover archive creation and restoration, including data/configuration round trips and unsafe archives. The admin SQLite download remains a database-only backup.
 
 ### Data retention / GDPR
 
@@ -288,3 +315,22 @@ The read-only GET endpoint returns `days`, `form_id`, and `analytics` containing
 Omit `form_id` for all forms. Invalid filters return 422, missing/invalid tokens
 return 401, and authenticated non-GET requests return 405. No individual email
 addresses or submission payloads are returned.
+
+## Development checks
+
+```bash
+composer install
+vendor/bin/phpunit
+composer analyse
+```
+
+PHPStan runs at level 6 with explicit collection and result types. The PHPUnit suite includes separate-process SQLite concurrency checks for overlapping workers, queue claims and abandoned-worker recovery, plus backup restoration, monitoring and webhook retry regressions. These tests exercise file-backed databases and process contention rather than only in-memory simulations.
+
+To run the production Docker operations test locally:
+
+```bash
+docker build --load -t formflow-test .
+python3 tests/Smoke/docker_operations.py --image=formflow-test
+```
+
+This test creates isolated named volumes, uses the null email transport, checks API authorization and queue health, restores a full backup, verifies restart persistence, and removes its temporary container and volumes. CI runs it after the PHP 8.4/8.5 test matrix passes.

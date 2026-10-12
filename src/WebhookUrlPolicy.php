@@ -38,6 +38,10 @@ final class WebhookUrlPolicy
 
         $host = strtolower((string) parse_url($url, PHP_URL_HOST));
 
+        if (str_starts_with($host, '[') && str_ends_with($host, ']')) {
+            $host = substr($host, 1, -1);
+        }
+
         if ($host === '' || $host === 'localhost' || str_ends_with($host, '.localhost')) {
             return ['error' => 'Webhook destination is not allowed.', 'ips' => []];
         }
@@ -57,7 +61,10 @@ final class WebhookUrlPolicy
         return ['error' => null, 'ips' => $ips];
     }
 
-    /** @param callable(string): list<string>|null $resolver @return list<string> */
+    /**
+     * @param callable(string): list<string>|null $resolver
+     * @return list<string>
+     */
     private static function resolveHost(string $host, ?callable $resolver): array
     {
         if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
@@ -93,10 +100,17 @@ final class WebhookUrlPolicy
 
     private static function isPublicIp(string $ip): bool
     {
+        // Multicast is not a unicast webhook destination, even though PHP's
+        // global-range flag accepts it. Shared carrier address space is also
+        // excluded by GLOBAL_RANGE, unlike NO_PRIV_RANGE | NO_RES_RANGE.
+        if ((new IpMatcher())->matches($ip, ['224.0.0.0/4', 'ff00::/8'])) {
+            return false;
+        }
+
         return filter_var(
             $ip,
             FILTER_VALIDATE_IP,
-            FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
+            FILTER_FLAG_GLOBAL_RANGE
         ) !== false;
     }
 }

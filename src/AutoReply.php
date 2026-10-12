@@ -6,7 +6,11 @@ namespace formflow;
 
 final class AutoReply
 {
-    /** @param array<string, mixed> $fields @return array{recipient: string, subject: string, body: string}|null */
+    /**
+     * @param array<string, mixed> $fields
+     * @return array{recipient: string, subject: string, body: string}|null
+     * @param array<string, mixed> $config
+     */
     public static function message(string $formId, array $config, array $fields): ?array
     {
         $settings = is_array($config['auto_reply'] ?? null) ? $config['auto_reply'] : [];
@@ -36,7 +40,10 @@ final class AutoReply
         ];
     }
 
-    /** @param array<string, mixed> $config @param array<string, mixed> $fields */
+    /**
+     * @param array<string, mixed> $config
+     * @param array<string, mixed> $fields
+     */
     public static function send(MailSenderInterface $sender, string $formId, array $config, array $fields): void
     {
         if (!$sender instanceof AutoReplySenderInterface) {

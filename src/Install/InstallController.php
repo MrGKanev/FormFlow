@@ -76,6 +76,9 @@ final class InstallController
         return HttpResponse::redirect('/admin/login');
     }
 
+    /**
+     * @param array<string, mixed> $input
+     */
     private function validate(array $input): ?string
     {
         foreach (self::REQUIRED_FIELDS as $field => $label) {
@@ -111,6 +114,9 @@ final class InstallController
         return null;
     }
 
+    /**
+     * @param array<string, mixed> $input
+     */
     private function writeEnv(array $input): void
     {
         $appUrl = trim((string) ($input['app_url'] ?? ''));
@@ -243,6 +249,8 @@ final class InstallController
 
     private function isWritableTarget(string $path): bool
     {
+        $path = $this->writableConfigPath($path);
+
         return is_writable(is_file($path) ? $path : dirname($path));
     }
 
@@ -258,6 +266,10 @@ final class InstallController
         return ($isHttps ? 'https' : 'http') . '://' . $host;
     }
 
+    /**
+     * @param list<array{label: string, ok: bool, detail: string}> $checks
+     * @param array<string, mixed> $old
+     */
     private function renderForm(?string $error, array $old, array $checks, bool $checksPass): string
     {
         return $this->render('install', [
@@ -270,6 +282,9 @@ final class InstallController
         ], 'Setup', withNav: false);
     }
 
+    /**
+     * @param array<string, mixed> $data
+     */
     private function render(string $view, array $data, string $title, bool $withNav = true): string
     {
         extract($data, EXTR_SKIP);
@@ -296,8 +311,30 @@ final class InstallController
         return HttpResponse::html($status, $body);
     }
 
+    private function writableConfigPath(string $path): string
+    {
+        for ($depth = 0; is_link($path); $depth++) {
+            if ($depth >= 16) {
+                throw new InvalidArgumentException('Config symlink chain is too long.');
+            }
+
+            $target = readlink($path);
+
+            if ($target === false) {
+                throw new InvalidArgumentException('Unable to resolve the config symlink.');
+            }
+
+            $path = str_starts_with($target, DIRECTORY_SEPARATOR)
+                ? $target
+                : dirname($path) . DIRECTORY_SEPARATOR . $target;
+        }
+
+        return $path;
+    }
+
     private function atomicWrite(string $path, string $content): void
     {
+        $path = $this->writableConfigPath($path);
         $directory = dirname($path);
         $temporaryPath = tempnam($directory, basename($path) . '.tmp.');
 
@@ -306,8 +343,13 @@ final class InstallController
         }
 
         try {
-            file_put_contents($temporaryPath, $content);
-            rename($temporaryPath, $path);
+            if (file_put_contents($temporaryPath, $content) !== strlen($content)) {
+                throw new InvalidArgumentException('Unable to write the config file.');
+            }
+
+            if (!rename($temporaryPath, $path)) {
+                throw new InvalidArgumentException('Unable to replace the config file.');
+            }
         } finally {
             if (is_file($temporaryPath)) {
                 unlink($temporaryPath);

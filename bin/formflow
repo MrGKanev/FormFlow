@@ -5,6 +5,10 @@ declare(strict_types=1);
 
 use formflow\CurlWebhookTransport;
 use formflow\AppVersion;
+use formflow\BackupService;
+use formflow\DeliveryAlertNotifier;
+use formflow\DeliveryMonitor;
+use formflow\WorkerHeartbeat;
 use formflow\MailDeliveryWorker;
 use formflow\MailService;
 use formflow\SqliteFormRepository;
@@ -15,7 +19,14 @@ use Symfony\Component\Dotenv\Dotenv;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
-$root = dirname(__DIR__);
+$arguments = $_SERVER['argv'] ?? [];
+$argv = is_array($arguments) ? array_values(array_filter($arguments, 'is_string')) : [];
+
+$root = realpath(cliOption($argv, 'root', dirname(__DIR__)));
+if ($root === false || !is_dir($root)) {
+    fwrite(STDERR, '--root must be an existing application directory.' . PHP_EOL);
+    exit(2);
+}
 
 if (is_file($root . '/.env')) {
     (new Dotenv())->usePutenv()->load($root . '/.env');
@@ -35,17 +46,6 @@ function cliDatabasePath(string $root): string
 function cliUploadDirectory(string $root): string
 {
     return $root . '/storage/uploads';
-}
-
-function cliRecordWorkerRun(string $root, string $worker): void
-{
-    $directory = $root . '/storage/runtime';
-
-    if (!is_dir($directory) && !mkdir($directory, 0775, true) && !is_dir($directory)) {
-        return;
-    }
-
-    file_put_contents($directory . '/' . $worker . '-last-run.txt', gmdate('c') . PHP_EOL);
 }
 
 function cliMailerDsnFromEnv(): string
@@ -89,6 +89,31 @@ function cliOption(array $argv, string $name, string $default): string
     return $default;
 }
 
+/** @param list<string> $argv */
+function cliPositiveIntegerOption(array $argv, string $name, string $default): int
+{
+    $value = cliOption($argv, $name, $default);
+    $parsed = filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+
+    if ($parsed === false) {
+        fwrite(STDERR, '--' . $name . ' must be a positive integer.' . PHP_EOL);
+        exit(2);
+    }
+
+    return $parsed;
+}
+
+/** @param list<string> $argv */
+function cliRequiredOption(array $argv, string $name): string
+{
+    $value = trim(cliOption($argv, $name, ''));
+    if ($value === '') {
+        fwrite(STDERR, '--' . $name . ' is required.' . PHP_EOL);
+        exit(2);
+    }
+    return $value;
+}
+
 function cliUsage(): void
 {
     fwrite(STDERR, "Usage:\n");
@@ -97,67 +122,130 @@ function cliUsage(): void
     fwrite(STDERR, "  php bin/formflow mail:work [--limit=100]\n");
     fwrite(STDERR, "  php bin/formflow mail:retry-failed [--limit=100]\n");
     fwrite(STDERR, "  php bin/formflow webhooks:retry [--limit=100]\n");
+    fwrite(STDERR, "  php bin/formflow backup:create --output=/private/backup.tar\n");
+    fwrite(STDERR, "  php bin/formflow backup:restore --input=/private/backup.tar --target=/empty/directory\n");
+    fwrite(STDERR, "  php bin/formflow delivery:status\n");
+    fwrite(STDERR, "  php bin/formflow delivery:check [--notify]\n");
+    fwrite(STDERR, "  Optional: --root=/path/to/application\n");
 }
 
 $command = $argv[1] ?? '';
 $databasePath = cliDatabasePath($root);
+$heartbeat = new WorkerHeartbeat($root);
+$activeWorker = null;
 
-if ($command === '--version' || $command === 'version') {
-    echo 'formflow ' . AppVersion::current() . PHP_EOL;
-    exit(0);
+try {
+
+    if ($command === '--version' || $command === 'version') {
+        echo 'formflow ' . AppVersion::current() . PHP_EOL;
+        exit(0);
+    }
+
+    if ($command === 'backup:create') {
+        $output = cliRequiredOption($argv, 'output');
+        $summary = (new BackupService())->create($root, $output, $databasePath);
+        echo json_encode(['archive' => $output] + $summary, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    }
+
+    if ($command === 'backup:restore') {
+        $input = cliRequiredOption($argv, 'input');
+        $target = cliRequiredOption($argv, 'target');
+        $summary = (new BackupService())->restore($input, $target);
+        echo json_encode(['restored_to' => $target] + $summary, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    }
+
+    if ($command === 'delivery:status' || $command === 'delivery:check') {
+        if (!is_file($databasePath)) {
+            throw new RuntimeException('Delivery database is unavailable.');
+        }
+        $status = DeliveryMonitor::fromEnvironment(
+            new SqliteSubmissionRepository($databasePath),
+            new SqliteWebhookDeliveryRepository($databasePath),
+            $root
+        )->snapshot();
+        if ($command === 'delivery:check' && in_array('--notify', $argv, true)) {
+            if (trim((string) (getenv('MAILER_DSN') ?: '')) === '' && trim((string) (getenv('SMTP_HOST') ?: '')) === '') {
+                throw new RuntimeException('Configure SMTP or MAILER_DSN before sending delivery alerts.');
+            }
+            $status['notification_sent'] = (new DeliveryAlertNotifier(
+                new MailService(cliMailerDsnFromEnv(), getenv('MAIL_FROM') ?: '', getenv('MAIL_FROM_NAME') ?: 'formflow'),
+                $root . '/storage/runtime/delivery-alert.json'
+            ))->notify($status, (string) (getenv('DELIVERY_ALERT_EMAIL') ?: ''));
+        }
+        echo json_encode($status, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($status['healthy'] ? 0 : 1);
+    }
+
+    if ($command === 'retention:prune') {
+        $days = cliPositiveIntegerOption($argv, 'days', (string) (getenv('RETENTION_DAYS') ?: '180'));
+        $deleted = (new SqliteSubmissionRepository($databasePath, cliUploadDirectory($root)))->deleteOlderThan($days);
+        echo 'Deleted ' . $deleted . ' submissions older than ' . $days . ' days.' . PHP_EOL;
+        exit(0);
+    }
+
+    if ($command === 'mail:work' || $command === 'mail:retry-failed') {
+        $limit = cliPositiveIntegerOption($argv, 'limit', '100');
+        $activeWorker = 'mail';
+        $heartbeat->started($activeWorker);
+        $configuredForms = require $root . '/config/forms.php';
+        $forms = array_merge($configuredForms, (new SqliteFormRepository($databasePath))->all());
+        $worker = new MailDeliveryWorker(
+            $forms,
+            new MailService(
+                cliMailerDsnFromEnv(),
+                getenv('MAIL_FROM') ?: '',
+                getenv('MAIL_FROM_NAME') ?: 'formflow'
+            ),
+            new SqliteSubmissionRepository($databasePath, cliUploadDirectory($root))
+        );
+        $summary = $command === 'mail:work' ? $worker->process($limit) : $worker->retryFailed($limit);
+
+        echo sprintf(
+            "%s attempted=%d sent=%d failed=%d skipped=%d\n",
+            $command === 'mail:work' ? 'Mail worker' : 'Mail retry',
+            $summary['attempted'],
+            $summary['sent'],
+            $summary['failed'],
+            $summary['skipped']
+        );
+        $heartbeat->completed('mail', $summary);
+        exit($summary['failed'] > 0 ? 1 : 0);
+    }
+
+    if ($command === 'webhooks:retry') {
+        $limit = cliPositiveIntegerOption($argv, 'limit', '100');
+        $activeWorker = 'webhooks';
+        $heartbeat->started($activeWorker);
+        $summary = (new WebhookDeliveryWorker(
+            new SqliteWebhookDeliveryRepository($databasePath),
+            new CurlWebhookTransport()
+        ))->process($limit);
+
+        echo sprintf(
+            "Webhook retry attempted=%d sent=%d failed=%d pending=%d skipped=%d\n",
+            $summary['attempted'],
+            $summary['sent'],
+            $summary['failed'],
+            $summary['pending'],
+            $summary['skipped']
+        );
+        $heartbeat->completed('webhooks', $summary);
+        exit($summary['failed'] > 0 ? 1 : 0);
+    }
+
+    cliUsage();
+    exit(2);
+
+} catch (Throwable $exception) {
+    if ($activeWorker !== null) {
+        try {
+            $heartbeat->failed($activeWorker);
+        } catch (Throwable $heartbeatError) {
+            fwrite(STDERR, 'Unable to record worker failure: ' . $heartbeatError->getMessage() . PHP_EOL);
+        }
+    }
+    fwrite(STDERR, $exception->getMessage() . PHP_EOL);
+    exit(1);
 }
-
-if ($command === 'retention:prune') {
-    $days = max(1, (int) cliOption($argv, 'days', (string) (getenv('RETENTION_DAYS') ?: '180')));
-    $deleted = (new SqliteSubmissionRepository($databasePath, cliUploadDirectory($root)))->deleteOlderThan($days);
-    echo 'Deleted ' . $deleted . ' submissions older than ' . $days . ' days.' . PHP_EOL;
-    exit(0);
-}
-
-if ($command === 'mail:work' || $command === 'mail:retry-failed') {
-    $configuredForms = require $root . '/config/forms.php';
-    $forms = array_merge($configuredForms, (new SqliteFormRepository($databasePath))->all());
-    $worker = new MailDeliveryWorker(
-        $forms,
-        new MailService(
-            cliMailerDsnFromEnv(),
-            getenv('MAIL_FROM') ?: '',
-            getenv('MAIL_FROM_NAME') ?: 'formflow'
-        ),
-        new SqliteSubmissionRepository($databasePath, cliUploadDirectory($root))
-    );
-    $limit = (int) cliOption($argv, 'limit', '100');
-    $summary = $command === 'mail:work' ? $worker->process($limit) : $worker->retryFailed($limit);
-
-    echo sprintf(
-        "%s attempted=%d sent=%d failed=%d skipped=%d\n",
-        $command === 'mail:work' ? 'Mail worker' : 'Mail retry',
-        $summary['attempted'],
-        $summary['sent'],
-        $summary['failed'],
-        $summary['skipped']
-    );
-    cliRecordWorkerRun($root, 'mail');
-    exit($summary['failed'] > 0 ? 1 : 0);
-}
-
-if ($command === 'webhooks:retry') {
-    $summary = (new WebhookDeliveryWorker(
-        new SqliteWebhookDeliveryRepository($databasePath),
-        new CurlWebhookTransport()
-    ))->process((int) cliOption($argv, 'limit', '100'));
-
-    echo sprintf(
-        "Webhook retry attempted=%d sent=%d failed=%d pending=%d skipped=%d\n",
-        $summary['attempted'],
-        $summary['sent'],
-        $summary['failed'],
-        $summary['pending'],
-        $summary['skipped']
-    );
-    cliRecordWorkerRun($root, 'webhooks');
-    exit($summary['failed'] > 0 ? 1 : 0);
-}
-
-cliUsage();
-exit(2);

@@ -47,6 +47,43 @@ final class AppRouter
             return;
         }
 
+        if ($formId === 'api/delivery-status') {
+            $token = (string) (getenv('OPERATIONS_API_TOKEN') ?: '');
+            $authorization = (string) ($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
+            header('Content-Type: application/json; charset=utf-8');
+            header('Cache-Control: no-store');
+            if ($token === '' || !hash_equals('Bearer ' . $token, $authorization)) {
+                http_response_code(401);
+                echo json_encode(['error' => 'Unauthorized']);
+                return;
+            }
+            if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
+                http_response_code(405);
+                header('Allow: GET');
+                echo json_encode(['error' => 'Method not allowed']);
+                return;
+            }
+            try {
+                $database = $this->factory->databasePath();
+                if (!is_file($database)) {
+                    throw new \RuntimeException('Delivery database is unavailable.');
+                }
+                $controller = new DeliveryStatusController(DeliveryMonitor::fromEnvironment(
+                    new SqliteSubmissionRepository($database),
+                    new SqliteWebhookDeliveryRepository($database),
+                    $this->root
+                ), $token);
+                $response = $controller->handle('GET', $authorization);
+                http_response_code($response->status);
+                echo json_encode($response->body, JSON_THROW_ON_ERROR);
+            } catch (Throwable $exception) {
+                error_log($exception->__toString());
+                http_response_code(503);
+                echo json_encode(['healthy' => false, 'error' => 'Delivery status is unavailable.']);
+            }
+            return;
+        }
+
         if ($formId === 'api/analytics') {
             $controller = new AnalyticsApiController(
                 new SqliteSubmissionRepository($this->factory->databasePath()),
@@ -54,7 +91,7 @@ final class AppRouter
             );
             $response = $controller->handle(
                 (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'),
-                (string) ($_SERVER['HTTP_AUTHORIZATION'] ?? ''),
+                (string) ($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? ''),
                 $_GET
             );
             http_response_code($response->status);

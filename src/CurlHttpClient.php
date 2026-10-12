@@ -90,6 +90,12 @@ final class CurlHttpClient
             return null;
         }
 
+        // Literal IP URLs already identify the exact destination and need no
+        // DNS override. IPv6 host entries also require very recent libcurl.
+        if (filter_var(trim($host, '[]'), FILTER_VALIDATE_IP) !== false) {
+            return null;
+        }
+
         $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
         $port = parse_url($url, PHP_URL_PORT);
 
@@ -97,6 +103,11 @@ final class CurlHttpClient
             $port = $scheme === 'https' ? 443 : 80;
         }
 
-        return sprintf('%s:%d:%s', $host, $port, implode(',', $ips));
+        $addresses = array_map(
+            static fn (string $ip): string => str_contains($ip, ':') ? '[' . $ip . ']' : $ip,
+            $ips
+        );
+
+        return sprintf('%s:%d:%s', $host, $port, implode(',', $addresses));
     }
 }
