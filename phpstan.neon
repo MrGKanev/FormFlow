@@ -1,5 +1,8 @@
 parameters:
   level: 6
+  # PHP 8.4 and 8.5 assign different numeric values to this flag.
+  dynamicConstantNames:
+    - FILTER_FLAG_GLOBAL_RANGE
   paths:
     - src
     - bin/formflow
