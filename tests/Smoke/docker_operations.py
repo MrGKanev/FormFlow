@@ -55,10 +55,10 @@ exit(str_contains((string) $body, '"status":"ok"') ? 0 : 1);
             time.sleep(0.1)
         raise RuntimeError("Container health check did not become ready")
 
-    def api(token, status_code, healthy=None):
+    def api(token, status_code, healthy=None, path="/api/delivery-status"):
         php(r"""
 $headers = '';
-$handle = curl_init('http://127.0.0.1/api/delivery-status');
+$handle = curl_init('http://127.0.0.1' . $argv[4]);
 curl_setopt_array($handle, [
     CURLOPT_RETURNTRANSFER => true,
     CURLOPT_TIMEOUT => 5,
@@ -79,7 +79,7 @@ if (!$valid) {
     fwrite(STDERR, 'Unexpected API response: ' . $code . ' ' . $body);
 }
 exit($valid ? 0 : 1);
-""", token, str(status_code), "none" if healthy is None else str(healthy).lower())
+""", token, str(status_code), "none" if healthy is None else str(healthy).lower(), path)
 
     try:
         run([
@@ -91,10 +91,14 @@ exit($valid ? 0 : 1);
             "-v", volumes[1] + ":/var/www/html/config", image,
         ])
         wait_ready()
+        php("file_put_contents('.env', \"APP_ENV=production\\nANALYTICS_API_TOKEN=smoke-analytics\\n\");")
+        api('wrong-token', 401, path='/api/analytics')
+        api('smoke-analytics', 503, path='/api/analytics')
+        php("exit(is_file('storage/submissions.sqlite') ? 1 : 0);")
         php(r"""
 require 'vendor/autoload.php';
 $environment = "APP_ENV=production\nMAILER_DSN=null://null\nMAIL_FROM=no-reply@example.test\n"
-    . "MAIL_DELIVERY_MODE=queue\nOPERATIONS_API_TOKEN=smoke-token\nIP_HASH_SECRET=smoke-secret\n";
+    . "MAIL_DELIVERY_MODE=queue\nOPERATIONS_API_TOKEN=smoke-token\nANALYTICS_API_TOKEN=smoke-analytics\nIP_HASH_SECRET=smoke-secret\n";
 if (file_put_contents('.env', $environment) !== strlen($environment) || !is_readable('.env')) {
     throw new RuntimeException('Persistent environment symlink is not writable/readable.');
 }
@@ -121,10 +125,39 @@ file_put_contents('storage/uploads/smoke.txt', 'smoke-upload');
         require(restored["healthy"] and restored["mail"]["pending"] == 0, "Restore status failed")
         php("exit(file_get_contents('/tmp/restored/storage/uploads/smoke.txt') === 'smoke-upload' ? 0 : 1);")
         api("smoke-token", 200, True)
+        api("smoke-analytics", 200, path="/api/analytics")
+        # Exercise real CLI retry state with a composition failure on the null
+        # mailer, so this test never contacts an external SMTP service.
+        php(r"""
+require 'vendor/autoload.php';
+$environment = file_get_contents('.env');
+file_put_contents('.env', str_replace('MAIL_FROM=no-reply@example.test', 'MAIL_FROM=invalid', $environment)
+    . "MAIL_MAX_ATTEMPTS=5\n");
+(new \formflow\SqliteSubmissionRepository('storage/submissions.sqlite'))
+    ->create('smoke', ['message' => 'bounded retry smoke'], null, 'pending_mail');
+""")
+        require('pending=1' in cli('mail:work'), 'Transport failure was not scheduled')
+        require('attempted=0' in cli('mail:work'), 'Worker ignored the future retry time')
+        for attempt in range(2, 6):
+            php("$pdo = new PDO('sqlite:storage/submissions.sqlite'); "
+                "$pdo->exec(\"UPDATE submissions SET mail_next_attempt_at = '2000-01-01T00:00:00+00:00' WHERE status = 'failed'\");")
+            summary = cli('mail:work', expected=1 if attempt == 5 else 0)
+            require(('failed=1' if attempt == 5 else 'pending=1') in summary, 'Unexpected retry outcome')
+        state = json.loads(php("$pdo = new PDO('sqlite:storage/submissions.sqlite'); "
+                              "echo json_encode($pdo->query(\"SELECT mail_attempts, mail_retryable, mail_next_attempt_at FROM submissions WHERE status = 'failed'\")->fetch(PDO::FETCH_ASSOC));"))
+        require(state['mail_attempts'] == 5 and state['mail_retryable'] == 0
+                and state['mail_next_attempt_at'] is None, 'Attempt budget was not terminal')
+        require('attempted=0' in cli('mail:work'), 'Exhausted mail was automatically retried')
+        api('smoke-token', 503, False)
+        require('pending=1' in cli('mail:retry-failed'), 'Explicit retry did not start a fresh budget')
+        php("file_put_contents('.env', str_replace('MAIL_FROM=invalid', 'MAIL_FROM=no-reply@example.test', file_get_contents('.env')));")
+        require('attempted=0' in cli('mail:work'), 'Automatic worker bypassed the new waiting period')
+        require('sent=1' in cli('mail:retry-failed'), 'Explicit retry failed after sender repair')
+        api('smoke-token', 200, True)
         run(["docker", "restart", container])
         wait_ready()
         api("smoke-token", 200, True)
-        print("Docker operations passed: read-only runtime, mail/heartbeat, API auth/status, full backup/restore, restart persistence.")
+        print("Docker operations passed: read-only runtime, mail/heartbeat, API auth/status, full backup/restore, bounded mail retries, restart persistence.")
     finally:
         subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=30)
         for volume in volumes:

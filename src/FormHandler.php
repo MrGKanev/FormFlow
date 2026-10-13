@@ -137,17 +137,19 @@ final class FormHandler
                     SubmissionPayloadFormatter::displayFields($fields)
                 );
 
-                $this->repository->markSent($submissionId);
-
-                try {
-                    AutoReply::send($this->mailService, $formId, $config, $fields);
-                } catch (Throwable $exception) {
-                    error_log(sprintf('Auto-reply failed for form "%s": %s', $formId, $exception->getMessage()));
-                }
             } catch (Throwable $exception) {
                 $this->repository->markFailed($submissionId, $exception->getMessage());
 
                 throw new RuntimeException('Unable to send the submission email.', 0, $exception);
+            }
+            // A bookkeeping failure after SMTP accepted the mail must not be
+            // treated as a send failure, or the retry worker sends it twice.
+            $this->repository->markSent($submissionId);
+
+            try {
+                AutoReply::send($this->mailService, $formId, $config, $fields);
+            } catch (Throwable $exception) {
+                error_log(sprintf('Auto-reply failed for form "%s": %s', $formId, $exception->getMessage()));
             }
         }
 

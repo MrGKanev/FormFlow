@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace formflow;
 
+use Closure;
+
 final class AnalyticsApiController
 {
+    /** @param SubmissionRepositoryInterface|Closure(): SubmissionRepositoryInterface $submissions */
     public function __construct(
-        private readonly SubmissionRepositoryInterface $submissions,
+        private readonly SubmissionRepositoryInterface|Closure $submissions,
         private readonly string $token
     ) {
     }
@@ -28,10 +31,11 @@ final class AnalyticsApiController
             return new HttpResponse(422, ['error' => 'Use days=7, 30 or 90 and a string form_id.'], headers: $headers);
         }
         $formId = trim($formId);
+        $submissions = $this->submissions instanceof Closure ? ($this->submissions)() : $this->submissions;
         return new HttpResponse(200, [
             'days' => (int) $days,
             'form_id' => $formId !== '' ? $formId : null,
-            'analytics' => $this->submissions->analyticsOverview((int) $days, $formId !== '' ? $formId : null),
+            'analytics' => $submissions->analyticsOverview((int) $days, $formId !== '' ? $formId : null),
         ], headers: $headers);
     }
 }

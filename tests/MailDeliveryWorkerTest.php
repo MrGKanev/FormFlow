@@ -24,7 +24,7 @@ final class MailDeliveryWorkerTest extends TestCase
             ],
         ], $mail, $repository))->process();
 
-        $this->assertSame(['attempted' => 1, 'sent' => 1, 'failed' => 0, 'skipped' => 0], $summary);
+        $this->assertSame(['attempted' => 1, 'sent' => 1, 'failed' => 0, 'pending' => 0, 'skipped' => 0], $summary);
         $this->assertSame('sent', $repository->find($id)['status']);
         $this->assertSame('owner@example.com', $mail->sentMessages[0]['recipient']);
     }
@@ -42,7 +42,7 @@ final class MailDeliveryWorkerTest extends TestCase
             ],
         ], $mail, $repository))->retryFailed();
 
-        $this->assertSame(['attempted' => 1, 'sent' => 1, 'failed' => 0, 'skipped' => 0], $summary);
+        $this->assertSame(['attempted' => 1, 'sent' => 1, 'failed' => 0, 'pending' => 0, 'skipped' => 0], $summary);
         $this->assertSame('sent', $repository->find($id)['status']);
         $this->assertSame('owner@example.com', $mail->sentMessages[0]['recipient']);
     }
@@ -60,7 +60,7 @@ final class MailDeliveryWorkerTest extends TestCase
             ],
         ], $mail, $repository))->retryFailed();
 
-        $this->assertSame(['attempted' => 1, 'sent' => 0, 'failed' => 1, 'skipped' => 0], $summary);
+        $this->assertSame(['attempted' => 1, 'sent' => 0, 'failed' => 0, 'pending' => 1, 'skipped' => 0], $summary);
         $this->assertSame('failed', $repository->find($id)['status']);
     }
 
@@ -74,10 +74,10 @@ final class MailDeliveryWorkerTest extends TestCase
             'contact' => ['recipient' => 'owner@example.com'],
         ], $mail, $repository))->retryFailed();
 
-        $this->assertSame(['attempted' => 0, 'sent' => 0, 'failed' => 0, 'skipped' => 0], $summary);
+        $this->assertSame(['attempted' => 0, 'sent' => 0, 'failed' => 0, 'pending' => 0, 'skipped' => 0], $summary);
     }
 
-    public function testSkipsPendingSubmissionWhenItsFormNoLongerExists(): void
+    public function testMarksPendingSubmissionFailedWhenItsFormNoLongerExists(): void
     {
         $repository = new SqliteSubmissionRepository(':memory:');
         $id = $repository->create('retired-form', ['email' => 'ada@example.com'], null, 'pending_mail');
@@ -85,8 +85,9 @@ final class MailDeliveryWorkerTest extends TestCase
 
         $summary = (new MailDeliveryWorker([], $mail, $repository))->process();
 
-        $this->assertSame(['attempted' => 0, 'sent' => 0, 'failed' => 0, 'skipped' => 1], $summary);
-        $this->assertSame('pending_mail', $repository->find($id)['status']);
+        $this->assertSame(['attempted' => 1, 'sent' => 0, 'failed' => 1, 'pending' => 0, 'skipped' => 0], $summary);
+        $this->assertSame('failed', $repository->find($id)['status']);
+        $this->assertSame('Submission form is missing or has no recipient configured.', $repository->find($id)['error_message']);
         $this->assertSame([], $mail->sentMessages);
     }
 
@@ -104,7 +105,7 @@ final class MailDeliveryWorkerTest extends TestCase
             'contact' => ['recipient' => 'owner@example.com'],
         ], $mail, $repository))->process();
 
-        $this->assertSame(['attempted' => 0, 'sent' => 0, 'failed' => 0, 'skipped' => 1], $summary);
+        $this->assertSame(['attempted' => 0, 'sent' => 0, 'failed' => 0, 'pending' => 0, 'skipped' => 0], $summary);
         $this->assertSame([], $mail->sentMessages);
         $this->assertSame('pending_mail', $repository->find($id)['status']);
     }
@@ -123,6 +124,71 @@ final class MailDeliveryWorkerTest extends TestCase
             ->execute(['locked_at' => gmdate('c', time() - 3600), 'id' => $id]);
 
         $this->assertTrue($repository->claim($id, 'pending_mail'));
+    }
+
+    public function testRemovedFormCannotStarveNewPendingMail(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $brokenId = $repository->create('removed', [], null, 'pending_mail');
+        $goodId = $repository->create('contact', ['name' => 'Ada'], null, 'pending_mail');
+        $worker = new MailDeliveryWorker(['contact' => ['recipient' => 'owner@example.com']], new FakeMailSender(), $repository);
+
+        $worker->process(1);
+        $worker->process(1);
+
+        $this->assertSame('failed', $repository->find($brokenId)['status']);
+        $this->assertSame('sent', $repository->find($goodId)['status']);
+    }
+
+    public function testMalformedPayloadCannotStarveNewPendingMail(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $brokenId = $repository->create('contact', [], null, 'pending_mail');
+        (new \ReflectionProperty($repository, 'pdo'))->getValue($repository)
+            ->prepare('UPDATE submissions SET payload = :payload WHERE id = :id')
+            ->execute(['payload' => '{invalid', 'id' => $brokenId]);
+        $goodId = $repository->create('contact', ['name' => 'Ada'], null, 'pending_mail');
+        $worker = new MailDeliveryWorker(['contact' => ['recipient' => 'owner@example.com']], new FakeMailSender(), $repository);
+
+        $worker->process(1);
+        $worker->process(1);
+
+        $this->assertSame('failed', $repository->find($brokenId)['status']);
+        $this->assertSame('Stored submission payload is invalid.', $repository->find($brokenId)['error_message']);
+        $this->assertSame('sent', $repository->find($goodId)['status']);
+    }
+
+    public function testPermanentlyFailingRetryDoesNotStarveOtherFailedMail(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $brokenId = $repository->create('removed', [], null, 'failed');
+        $goodId = $repository->create('contact', ['name' => 'Ada'], null, 'failed');
+        $worker = new MailDeliveryWorker(['contact' => ['recipient' => 'owner@example.com']], new FakeMailSender(), $repository);
+
+        $worker->retryFailed(1);
+        $worker->retryFailed(1);
+
+        $this->assertSame('failed', $repository->find($brokenId)['status']);
+        $this->assertSame('sent', $repository->find($goodId)['status']);
+    }
+
+    public function testAutomaticRetriesRotateFailedRowsAndNeverRetrySentMail(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $firstBroken = $repository->create('removed-one', [], null, 'failed');
+        $secondBroken = $repository->create('removed-two', [], null, 'failed');
+        $goodId = $repository->create('contact', ['name' => 'Ada'], null, 'failed');
+        $mail = new FakeMailSender();
+        $worker = new MailDeliveryWorker(['contact' => ['recipient' => 'owner@example.com']], $mail, $repository);
+
+        for ($round = 0; $round < 6; $round++) {
+            $worker->process(1);
+        }
+
+        $this->assertSame('failed', $repository->find($firstBroken)['status']);
+        $this->assertSame('failed', $repository->find($secondBroken)['status']);
+        $this->assertSame('sent', $repository->find($goodId)['status']);
+        $this->assertCount(1, $mail->sentMessages);
     }
 
     public function testQueuedDeliveryAlsoSendsConfiguredAutoReply(): void

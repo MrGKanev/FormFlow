@@ -7,7 +7,7 @@ namespace formflow;
 use PDO;
 use RuntimeException;
 
-final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
+final class SqliteSubmissionRepository implements MailRetryRepositoryInterface
 {
     private PDO $pdo;
 
@@ -44,8 +44,8 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         string $status = 'received'
     ): int {
         $statement = $this->pdo->prepare(
-            'INSERT INTO submissions (form_id, payload, ip_hash, status, created_at)
-             VALUES (:form_id, :payload, :ip_hash, :status, :created_at)'
+            'INSERT INTO submissions (form_id, payload, ip_hash, status, created_at, mail_attempts, mail_retryable)
+             VALUES (:form_id, :payload, :ip_hash, :status, :created_at, :mail_attempts, :mail_retryable)'
         );
 
         $statement->execute([
@@ -57,6 +57,8 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
             'ip_hash' => $ipHash,
             'status' => $status,
             'created_at' => Clock::nowIso(),
+            'mail_attempts' => in_array($status, ['sent', 'failed'], true) ? 1 : 0,
+            'mail_retryable' => $status === 'sent' ? 0 : 1,
         ]);
 
         return (int) $this->pdo->lastInsertId();
@@ -66,7 +68,10 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
     {
         $statement = $this->pdo->prepare(
             'UPDATE submissions
-             SET locked_at = :now
+             SET locked_at = :now, mail_attempted_at = :attempted_at,
+                 mail_attempts = CASE WHEN status IN (\'sent\', \'received\') THEN 1 ELSE mail_attempts END,
+                 mail_retryable = CASE WHEN status IN (\'sent\', \'received\') THEN 1 ELSE mail_retryable END,
+                 mail_next_attempt_at = CASE WHEN status IN (\'sent\', \'received\') THEN NULL ELSE mail_next_attempt_at END
              WHERE id = :id
                AND status = :expected_status
                AND (locked_at IS NULL OR locked_at < :stale_cutoff)'
@@ -74,6 +79,7 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
 
         $statement->execute([
             'now' => Clock::nowIso(),
+            'attempted_at' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d\TH:i:s.uP'),
             'id' => $submissionId,
             'expected_status' => $expectedStatus,
             'stale_cutoff' => Clock::relativeIso(-max(0, $staleAfterSeconds)),
@@ -86,7 +92,8 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
     {
         $statement = $this->pdo->prepare(
             'UPDATE submissions
-             SET status = :status, sent_at = :sent_at, error_message = NULL, locked_at = NULL
+             SET status = :status, sent_at = :sent_at, error_message = NULL, locked_at = NULL,
+                 mail_attempts = MAX(mail_attempts, 1), mail_next_attempt_at = NULL, mail_retryable = 0
              WHERE id = :id'
         );
 
@@ -99,17 +106,96 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
 
     public function markFailed(int $submissionId, string $errorMessage): void
     {
+        $statement = $this->pdo->prepare('SELECT mail_attempts FROM submissions WHERE id = :id');
+        $statement->execute(['id' => $submissionId]);
+        $attempts = max(1, (int) $statement->fetchColumn());
+        $policy = MailRetryPolicy::fromEnvironment();
+        $this->markMailFailed(
+            $submissionId,
+            $errorMessage,
+            $attempts < $policy->maxAttempts ? $policy->delay($attempts) : null
+        );
+    }
+
+    public function markMailFailed(int $submissionId, string $errorMessage, ?int $retryAfterSeconds): void
+    {
         $statement = $this->pdo->prepare(
             'UPDATE submissions
-             SET status = :status, error_message = :error_message, locked_at = NULL
+             SET status = :status, error_message = :error_message, locked_at = NULL,
+                 mail_attempts = MAX(mail_attempts, 1), mail_retryable = :retryable,
+                 mail_next_attempt_at = :next_attempt
              WHERE id = :id'
         );
-
         $statement->execute([
             'status' => 'failed',
             'error_message' => mb_substr($errorMessage, 0, 1000),
+            'retryable' => $retryAfterSeconds === null ? 0 : 1,
+            'next_attempt' => $retryAfterSeconds === null ? null : Clock::relativeIso(max(0, $retryAfterSeconds)),
             'id' => $submissionId,
         ]);
+    }
+
+    public function claimMail(int $submissionId, string $expectedStatus, int $maxAttempts = 5, bool $forceRetry = false): ?array
+    {
+        if (!in_array($expectedStatus, ['pending_mail', 'failed'], true)) {
+            return null;
+        }
+
+        $statement = $this->pdo->prepare(
+            "UPDATE submissions
+             SET locked_at = :now, mail_attempted_at = :attempted_at,
+                 mail_attempts = CASE WHEN CAST(:force AS INTEGER) = 1 THEN 1 ELSE mail_attempts + 1 END,
+                 mail_next_attempt_at = NULL, mail_retryable = 1
+             WHERE id = :id AND status = :expected_status
+               AND (locked_at IS NULL OR locked_at < :stale_cutoff)
+               AND (CAST(:force AS INTEGER) = 1 OR (mail_retryable = 1 AND mail_attempts < :max_attempts
+                    AND (mail_next_attempt_at IS NULL OR mail_next_attempt_at <= :now)))
+             RETURNING *"
+        );
+        $statement->execute([
+            'now' => Clock::nowIso(),
+            'attempted_at' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d\TH:i:s.uP'),
+            'force' => $forceRetry ? 1 : 0,
+            'id' => $submissionId,
+            'expected_status' => $expectedStatus,
+            'stale_cutoff' => Clock::relativeIso(-900),
+            'max_attempts' => max(1, $maxAttempts),
+        ]);
+        $row = $statement->fetch();
+        $statement->closeCursor();
+
+        return $row === false ? null : $row;
+    }
+
+    public function findDueMail(int $limit = 100, bool $includeFailed = true, int $maxAttempts = 5): array
+    {
+        // A worker may die after consuming its final attempt. Do not leave that
+        // row pending forever or resend it beyond the persisted retry budget.
+        $reap = $this->pdo->prepare(
+            "UPDATE submissions SET status = 'failed', mail_retryable = 0,
+                mail_next_attempt_at = NULL, locked_at = NULL,
+                error_message = COALESCE(error_message, 'Mail retry limit reached; the last worker may have stopped during delivery.')
+             WHERE status IN ('pending_mail', 'failed') AND mail_attempts >= :max_attempts
+               AND mail_retryable = 1 AND (locked_at IS NULL OR locked_at < :stale_cutoff)"
+        );
+        $reap->execute(['max_attempts' => max(1, $maxAttempts), 'stale_cutoff' => Clock::relativeIso(-900)]);
+        $statement = $this->pdo->prepare(
+            "SELECT * FROM submissions
+             WHERE (status = 'pending_mail' OR (CAST(:include_failed AS INTEGER) = 1 AND status = 'failed'))
+               AND mail_retryable = 1 AND mail_attempts < :max_attempts
+               AND (mail_next_attempt_at IS NULL OR mail_next_attempt_at <= :now)
+               AND (locked_at IS NULL OR locked_at < :stale_cutoff)
+             ORDER BY CASE WHEN status = 'pending_mail' THEN 0 ELSE 1 END ASC,
+                 mail_attempted_at ASC, created_at ASC, id ASC LIMIT :limit"
+        );
+        $statement->bindValue(':include_failed', $includeFailed ? 1 : 0, PDO::PARAM_INT);
+        $statement->bindValue(':max_attempts', max(1, $maxAttempts), PDO::PARAM_INT);
+        $statement->bindValue(':now', Clock::nowIso(), PDO::PARAM_STR);
+        $statement->bindValue(':stale_cutoff', Clock::relativeIso(-900), PDO::PARAM_STR);
+        $statement->bindValue(':limit', max(1, $limit), PDO::PARAM_INT);
+        $statement->execute();
+
+        return $statement->fetchAll();
     }
 
     public function markReviewed(int $submissionId): void
@@ -283,7 +369,7 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         $statement = $this->pdo->prepare(
             'SELECT * FROM submissions
              WHERE status = :status
-             ORDER BY created_at ASC, id ASC
+             ORDER BY mail_attempted_at ASC, created_at ASC, id ASC
              LIMIT :limit'
         );
         $statement->bindValue(':status', 'failed', PDO::PARAM_STR);
@@ -300,7 +386,7 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         $statement = $this->pdo->prepare(
             'SELECT * FROM submissions
              WHERE status IN (' . $placeholders . ')
-             ORDER BY created_at ASC, id ASC
+             ORDER BY CASE WHEN status = \'pending_mail\' THEN 0 ELSE 1 END ASC, mail_attempted_at ASC, created_at ASC, id ASC
              LIMIT ?'
         );
         $statement->execute([...$statuses, max(1, $limit)]);
@@ -311,7 +397,8 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
     public function deliveryLog(int $limit = 100, int $offset = 0): array
     {
         $statement = $this->pdo->prepare(
-            'SELECT id, form_id, status, error_message, created_at, sent_at, reviewed_at
+            'SELECT id, form_id, status, error_message, created_at, sent_at, reviewed_at,
+                 mail_attempts, mail_next_attempt_at, mail_retryable
              FROM submissions
              ORDER BY created_at DESC, id DESC
              LIMIT :limit OFFSET :offset'
@@ -546,16 +633,7 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
             )'
         );
 
-        $columns = $this->pdo->query('PRAGMA table_info(submissions)')->fetchAll();
-        $columnNames = array_column($columns, 'name');
-
-        if (!in_array('reviewed_at', $columnNames, true)) {
-            $this->pdo->exec('ALTER TABLE submissions ADD COLUMN reviewed_at TEXT');
-        }
-
-        if (!in_array('locked_at', $columnNames, true)) {
-            $this->pdo->exec('ALTER TABLE submissions ADD COLUMN locked_at TEXT');
-        }
+        $this->upgradeSubmissionColumns();
 
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_submissions_form_id ON submissions(form_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status)');
@@ -565,9 +643,50 @@ final class SqliteSubmissionRepository implements SubmissionRepositoryInterface
         $this->createSearchIndex();
     }
 
+    private function upgradeSubmissionColumns(): void
+    {
+        $required = [
+            'reviewed_at' => 'TEXT',
+            'locked_at' => 'TEXT',
+            'mail_attempted_at' => 'TEXT',
+            'mail_attempts' => 'INTEGER NOT NULL DEFAULT 0',
+            'mail_next_attempt_at' => 'TEXT',
+            'mail_retryable' => 'INTEGER NOT NULL DEFAULT 1',
+        ];
+        $columns = $this->pdo->query('PRAGMA table_info(submissions)')->fetchAll();
+
+        if (array_diff(array_keys($required), array_column($columns, 'name')) === []) {
+            return;
+        }
+
+        // Only an actual upgrade takes a writer lock. Recheck after acquiring
+        // it because another startup may have already completed the migration.
+        $this->pdo->exec('BEGIN IMMEDIATE');
+
+        try {
+            $columns = $this->pdo->query('PRAGMA table_info(submissions)')->fetchAll();
+            $existing = array_column($columns, 'name');
+
+            foreach (array_diff(array_keys($required), $existing) as $column) {
+                $this->pdo->exec('ALTER TABLE submissions ADD COLUMN ' . $column . ' ' . $required[$column]);
+            }
+
+            if (!in_array('mail_attempts', $existing, true)) {
+                $this->pdo->exec("UPDATE submissions SET mail_attempts = 1 WHERE status IN ('sent', 'failed')");
+            }
+            if (!in_array('mail_retryable', $existing, true)) {
+                $this->pdo->exec("UPDATE submissions SET mail_retryable = 0 WHERE status = 'sent'");
+            }
+
+            $this->pdo->exec('COMMIT');
+        } catch (\Throwable $exception) {
+            $this->pdo->exec('ROLLBACK');
+            throw $exception;
+        }
+    }
+
     /**
      * @param list<int> $ids
-     * @return list<int>
      * @return list<int>
      */
     private function validIds(array $ids): array

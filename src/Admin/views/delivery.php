@@ -38,13 +38,6 @@ $displayEndpoint = static function (?string $url): string {
     </div>
 </div>
 
-<div class="page-header compact">
-    <div>
-        <h2>Email deliveries</h2>
-        <p class="page-meta">Submission email status remains separate from optional integration notifications.</p>
-    </div>
-</div>
-
 <div class="table-wrap">
     <table>
         <thead>
@@ -87,10 +80,17 @@ $displayEndpoint = static function (?string $url): string {
     </table>
 </div>
 
+<div class="page-header compact">
+    <div>
+        <h2>Email deliveries</h2>
+        <p class="page-meta">Submission email status remains separate from optional integration notifications.</p>
+    </div>
+</div>
+
 <div class="table-wrap">
     <table>
         <thead>
-            <tr><th>ID</th><th>Form</th><th>Status</th><th>Created</th><th>Sent</th><th>Error</th></tr>
+            <tr><th>ID</th><th>Form</th><th>Status</th><th>Attempts</th><th>Retry</th><th>Created</th><th>Sent</th><th>Error</th></tr>
         </thead>
         <tbody>
         <?php foreach ($entries as $entry): ?>
@@ -99,13 +99,22 @@ $displayEndpoint = static function (?string $url): string {
                 <td><a class="row-link" href="/admin/submissions/<?= (int) $entry['id'] ?>">#<?= (int) $entry['id'] ?></a></td>
                 <td><?= htmlspecialchars((string) $entry['form_id'], ENT_QUOTES, 'UTF-8') ?></td>
                 <td><span class="status-pill <?= htmlspecialchars($statusClass($status), ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($status, ENT_QUOTES, 'UTF-8') ?></span></td>
+                <td><?= isset($entry['mail_attempts']) ? (string) (int) $entry['mail_attempts'] : '—' ?></td>
+                <td>
+                    <?php if (!array_key_exists('mail_retryable', $entry)): ?>—
+                    <?php elseif ($status === 'sent'): ?>Delivered
+                    <?php elseif (!empty($entry['mail_next_attempt_at'])): ?><?= htmlspecialchars((string) $entry['mail_next_attempt_at'], ENT_QUOTES, 'UTF-8') ?>
+                    <?php elseif ($status === 'failed' && empty($entry['mail_retryable'])): ?>Stopped — manual resend available
+                    <?php elseif (in_array($status, ['pending_mail', 'failed'], true)): ?>Waiting for worker
+                    <?php else: ?>Not scheduled<?php endif; ?>
+                </td>
                 <td><?= htmlspecialchars((string) $entry['created_at'], ENT_QUOTES, 'UTF-8') ?></td>
                 <td><?= !empty($entry['sent_at']) ? htmlspecialchars((string) $entry['sent_at'], ENT_QUOTES, 'UTF-8') : '<span class="muted">Not sent</span>' ?></td>
                 <td><?= !empty($entry['error_message']) ? htmlspecialchars((string) $entry['error_message'], ENT_QUOTES, 'UTF-8') : '<span class="muted">None</span>' ?></td>
             </tr>
         <?php endforeach; ?>
         <?php if ($entries === []): ?>
-            <tr><td colspan="6" class="empty-state">No delivery entries yet.</td></tr>
+            <tr><td colspan="8" class="empty-state">No delivery entries yet.</td></tr>
         <?php endif; ?>
         </tbody>
     </table>

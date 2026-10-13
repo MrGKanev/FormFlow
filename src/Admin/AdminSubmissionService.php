@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace formflow\Admin;
 
 use formflow\MailSenderInterface;
+use formflow\MailRetryRepositoryInterface;
+use formflow\MailRetryPolicy;
 use formflow\SubmissionPayloadFormatter;
 use formflow\SubmissionRepositoryInterface;
 use Throwable;
@@ -21,7 +23,6 @@ final class AdminSubmissionService
 
     /**
      * @param mixed $value
-     * @return list<int>
      * @return list<int>
      */
     public function selectedIds(mixed $value): array
@@ -65,6 +66,35 @@ final class AdminSubmissionService
             return 'Submission payload is invalid.';
         }
 
+        $policy = MailRetryPolicy::fromEnvironment();
+        $id = (int) $submission['id'];
+        $status = (string) $submission['status'];
+
+        if ($this->submissions instanceof MailRetryRepositoryInterface && in_array($status, ['pending_mail', 'failed'], true)) {
+            $claimed = $this->submissions->claimMail($id, $status, $policy->maxAttempts, true);
+        } else {
+            $claimed = $this->submissions->claim($id, $status) ? $this->submissions->find($id) : null;
+        }
+
+        if ($claimed === null) {
+            return 'This submission is already being delivered or its delivery status changed. Please refresh and try again.';
+        }
+
+        // Use the claimed row so edits or status changes cannot leave us sending a stale payload.
+        $config = $this->forms[(string) $claimed['form_id']] ?? null;
+        $payload = json_decode((string) $claimed['payload'], true);
+
+        if (!is_array($config) || !is_array($payload)) {
+            $error = !is_array($config) ? 'Form configuration was not found.' : 'Submission payload is invalid.';
+            if ($this->submissions instanceof MailRetryRepositoryInterface) {
+                $this->submissions->markMailFailed($id, $error, null);
+            } else {
+                $this->submissions->markFailed($id, $error);
+            }
+
+            return $error;
+        }
+
         try {
             $this->mailSender->send(
                 (string) ($config['recipient'] ?? ''),
@@ -72,13 +102,23 @@ final class AdminSubmissionService
                 SubmissionPayloadFormatter::displayFields($payload)
             );
 
-            $this->submissions->markSent((int) $submission['id']);
-
-            return null;
         } catch (Throwable $exception) {
-            $this->submissions->markFailed((int) $submission['id'], $exception->getMessage());
+            if ($this->submissions instanceof MailRetryRepositoryInterface) {
+                $attempts = (int) ($claimed['mail_attempts'] ?? 1);
+                $this->submissions->markMailFailed(
+                    $id,
+                    $exception->getMessage(),
+                    $attempts < $policy->maxAttempts ? $policy->delay($attempts) : null
+                );
+            } else {
+                $this->submissions->markFailed($id, $exception->getMessage());
+            }
 
             return 'Unable to resend email: ' . $exception->getMessage();
         }
+
+        $this->submissions->markSent($id);
+
+        return null;
     }
 }

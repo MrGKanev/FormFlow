@@ -763,6 +763,34 @@ final class FormHandlerTest extends TestCase
         $this->assertSame('pending_mail', $repository->find(1)['status']);
     }
 
+    public function testSuccessfulMailIsNotQueuedForRetryWhenSentStatusCannotBeStored(): void
+    {
+        $_POST = ['name' => 'Ada', 'email' => 'ada@example.com'];
+        $repository = new SqliteSubmissionRepository(':memory:');
+        (new \ReflectionProperty($repository, 'pdo'))->getValue($repository)->exec(
+            "CREATE TRIGGER reject_sent_status BEFORE UPDATE OF status ON submissions
+             WHEN NEW.status = 'sent' BEGIN SELECT RAISE(ABORT, 'Sent status write failed.'); END"
+        );
+        $mail = new FakeMailSender();
+        $handler = $this->makeHandler(
+            ['contact' => $this->contactForm(['captcha_provider' => 'none'])],
+            $mail,
+            repository: $repository
+        );
+
+        try {
+            $handler->handle('contact');
+            $this->fail('Expected a sent status storage failure.');
+        } catch (\PDOException $exception) {
+            $this->assertStringContainsString('Sent status write failed.', $exception->getMessage());
+        }
+
+        $this->assertCount(1, $mail->sentMessages);
+        $this->assertSame('received', $repository->find(1)['status']);
+        $this->assertNull($repository->find(1)['error_message']);
+        $this->assertSame([], $repository->findDueMail());
+    }
+
     public function testMailFailureMarksSubmissionFailedAndThrows(): void
     {
         $_POST = ['name' => 'Ada', 'email' => 'ada@example.com', 'message' => 'Hello'];
@@ -787,6 +815,10 @@ final class FormHandlerTest extends TestCase
             $row = $repository->find(1);
             $this->assertSame('failed', $row['status']);
             $this->assertSame('Simulated SMTP failure.', $row['error_message']);
+            $this->assertSame(1, $row['mail_attempts']);
+            $this->assertSame(1, $row['mail_retryable']);
+            $this->assertNotNull($row['mail_next_attempt_at']);
+            $this->assertGreaterThan(time(), strtotime($row['mail_next_attempt_at']));
         }
     }
 

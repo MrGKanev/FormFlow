@@ -6,6 +6,8 @@ namespace formflow\Tests;
 
 use formflow\AdminAuth;
 use formflow\SqliteRateLimiter;
+use formflow\SqliteAdminUserRepository;
+use formflow\AdminUserRepositoryInterface;
 use formflow\SqliteTotpReplayGuard;
 use formflow\Totp;
 use formflow\TotpReplayGuardInterface;
@@ -31,6 +33,167 @@ final class AdminAuthTest extends TestCase
             $totpSecret,
             $totpReplayGuard
         );
+    }
+
+    protected function tearDown(): void
+    {
+        $_SESSION = [];
+    }
+
+    private function storedAuth(AdminUserRepositoryInterface $users, string $bootstrapHash = ''): AdminAuth
+    {
+        return new AdminAuth('admin', $bootstrapHash, new SqliteRateLimiter(':memory:'), 5, 15, $users);
+    }
+
+    public function testDeletingAndRecreatingAccountWithSameCredentialsRevokesSession(): void
+    {
+        $_SESSION = [];
+        $users = new SqliteAdminUserRepository(':memory:');
+        $hash = password_hash('password', PASSWORD_BCRYPT, ['cost' => 4]);
+        $users->create('teammate', $hash);
+        $auth = $this->storedAuth($users);
+        $this->assertSame('ok', $auth->attemptLogin('teammate', 'password', 'ip'));
+        $auth->login('teammate');
+        $this->assertTrue($auth->isLoggedIn());
+        $id = $users->findByUsername('teammate')['id'];
+        $users->delete($id);
+        $users->create('teammate', $hash);
+
+        $this->assertFalse($auth->isLoggedIn());
+        $this->assertArrayNotHasKey('admin_identity', $_SESSION);
+    }
+
+    public function testDeletedAccountCannotFallBackToSameNamedBootstrapIdentity(): void
+    {
+        $_SESSION = [];
+        $users = new SqliteAdminUserRepository(':memory:');
+        $hash = password_hash('password', PASSWORD_BCRYPT, ['cost' => 4]);
+        $users->create('admin', $hash);
+        $auth = $this->storedAuth($users, $hash);
+        $this->assertSame('ok', $auth->attemptLogin('admin', 'password', 'ip'));
+        $auth->login('admin');
+        $users->delete($users->findByUsername('admin')['id']);
+        $this->assertFalse($auth->isLoggedIn());
+    }
+
+    public function testBootstrapSessionRemainsSeparateFromSameNamedStoredAccount(): void
+    {
+        $_SESSION = [];
+        $users = new SqliteAdminUserRepository(':memory:');
+        $hash = password_hash('password', PASSWORD_BCRYPT, ['cost' => 4]);
+        $auth = $this->storedAuth($users, $hash);
+        $this->assertSame('ok', $auth->attemptLogin('admin', 'password', 'ip'));
+        $auth->login('admin');
+        $users->create('admin', password_hash('different', PASSWORD_BCRYPT, ['cost' => 4]));
+        $this->assertTrue($auth->isLoggedIn());
+        $users->delete($users->findByUsername('admin')['id']);
+        $this->assertTrue($auth->isLoggedIn());
+    }
+
+    public function testBootstrapCredentialChangesRevokeExistingSession(): void
+    {
+        $_SESSION = [];
+        $hash = password_hash('password', PASSWORD_BCRYPT, ['cost' => 4]);
+        $auth = $this->makeAuth($hash);
+        $auth->login();
+        $this->assertTrue($auth->isLoggedIn());
+        $this->assertFalse($this->makeAuth($hash, totpSecret: 'NEWSECRET')->isLoggedIn());
+        $auth->login();
+        $this->assertFalse($this->makeAuth(password_hash('new', PASSWORD_BCRYPT, ['cost' => 4]))->isLoggedIn());
+    }
+
+    public function testStoredCredentialChangeRevokesSession(): void
+    {
+        $_SESSION = [];
+        $row = ['id' => 1, 'username' => 'teammate', 'password_hash' => password_hash('password', PASSWORD_BCRYPT, ['cost' => 4]), 'totp_secret' => '', 'created_at' => 'now'];
+        $users = $this->createMock(AdminUserRepositoryInterface::class);
+        $users->method('findByUsername')->willReturnCallback(static function () use (&$row) { return $row; });
+        $auth = $this->storedAuth($users);
+        $this->assertSame('ok', $auth->attemptLogin('teammate', 'password', 'ip'));
+        $auth->login('teammate');
+        $row['totp_secret'] = 'NEWSECRET';
+        $this->assertFalse($auth->isLoggedIn());
+        $row['totp_secret'] = '';
+        $this->assertSame('ok', $auth->attemptLogin('teammate', 'password', 'ip'));
+        $auth->login('teammate');
+        $row['password_hash'] = password_hash('new-password', PASSWORD_BCRYPT, ['cost' => 4]);
+        $this->assertFalse($auth->isLoggedIn());
+    }
+
+    public function testAccountReplacementBetweenVerificationAndSessionCreationIsRejected(): void
+    {
+        $_SESSION = [];
+        $users = new SqliteAdminUserRepository(':memory:');
+        $hash = password_hash('password', PASSWORD_BCRYPT, ['cost' => 4]);
+        $users->create('teammate', $hash);
+        $auth = $this->storedAuth($users);
+        $this->assertSame('ok', $auth->attemptLogin('teammate', 'password', 'ip'));
+        $users->delete($users->findByUsername('teammate')['id']);
+        $users->create('teammate', $hash);
+        $auth->login('teammate');
+        $this->assertFalse($auth->isLoggedIn());
+    }
+
+    public function testLegacySessionAndFailedLoginCannotAuthorize(): void
+    {
+        $auth = $this->makeAuth(password_hash('password', PASSWORD_BCRYPT, ['cost' => 4]));
+        $_SESSION = ['admin_logged_in' => true, 'admin_username' => 'admin'];
+        $this->assertFalse($auth->isLoggedIn());
+        $this->assertSame('ok', $auth->attemptLogin('admin', 'password', 'ip'));
+        $this->assertSame('invalid', $auth->attemptLogin('admin', 'wrong', 'ip'));
+        $auth->login('admin');
+        $this->assertFalse($auth->isLoggedIn());
+    }
+
+    public function testDevelopmentSessionsRequireExplicitAuthorizationAndLogoutClearsMetadata(): void
+    {
+        $_SESSION = [];
+        $auth = $this->makeAuth('');
+        $auth->loginDevelopment();
+        $this->assertTrue($auth->isLoggedIn(true));
+        $this->assertFalse($auth->isLoggedIn());
+        $auth->loginDevelopment();
+        $auth->logout();
+        $this->assertSame([], $_SESSION);
+        $auth->login();
+        $this->assertFalse($auth->isLoggedIn(true));
+    }
+
+    public function testStoredUserNamedDevLocalhostUsesNormalAccountRevocation(): void
+    {
+        $_SESSION = [];
+        $users = new SqliteAdminUserRepository(':memory:');
+        $users->create('dev-localhost', password_hash('password', PASSWORD_BCRYPT, ['cost' => 4]));
+        $auth = $this->storedAuth($users);
+        $this->assertSame('ok', $auth->attemptLogin('dev-localhost', 'password', 'ip'));
+        $auth->login('dev-localhost');
+        $this->assertTrue($auth->isLoggedIn());
+        $users->delete($users->findByUsername('dev-localhost')['id']);
+        $this->assertFalse($auth->isLoggedIn(true));
+    }
+
+    public function testLoginWithoutUsernameBindsPreviouslyVerifiedStoredAccount(): void
+    {
+        $_SESSION = [];
+        $users = new SqliteAdminUserRepository(':memory:');
+        $hash = password_hash('password', PASSWORD_BCRYPT, ['cost' => 4]);
+        $users->create('alice', $hash);
+        $auth = $this->storedAuth($users, $hash);
+        $this->assertSame('ok', $auth->attemptLogin('alice', 'password', 'ip'));
+        $auth->login();
+        $this->assertSame('alice', $auth->username());
+        $this->assertTrue($auth->isLoggedIn());
+        $users->delete($users->findByUsername('alice')['id']);
+        $this->assertFalse($auth->isLoggedIn());
+    }
+
+    public function testSupplyingUsernameWithoutVerifiedAttemptCannotCreateSession(): void
+    {
+        $_SESSION = [];
+        $auth = $this->makeAuth(password_hash('password', PASSWORD_BCRYPT, ['cost' => 4]));
+        $auth->login('admin');
+        $this->assertFalse($auth->isLoggedIn());
+        $this->assertSame([], $_SESSION);
     }
 
     public function testCorrectCredentialsReturnOk(): void
@@ -101,6 +264,18 @@ final class AdminAuthTest extends TestCase
         $result = $auth->attemptLogin('admin', 'correct-password', 'ip-hash-1');
 
         $this->assertSame('locked', $result);
+    }
+
+    public function testUnknownIpStillAllowsExactlyTheConfiguredNumberOfAttempts(): void
+    {
+        $hash = password_hash('correct-password', PASSWORD_BCRYPT, ['cost' => 4]);
+        $rateLimiter = new SqliteRateLimiter(':memory:');
+        $auth = $this->makeAuth($hash, 2, 15, $rateLimiter);
+
+        $this->assertSame('ok', $auth->attemptLogin('admin', 'correct-password', null));
+        $this->assertSame('ok', $auth->attemptLogin('admin', 'correct-password', null));
+        $this->assertSame('locked', $auth->attemptLogin('admin', 'correct-password', null));
+        $this->assertSame(3, $rateLimiter->countRecentHitsByIp('admin_login', null, 15));
     }
 
     public function testLockoutIsScopedPerIpHash(): void

@@ -51,4 +51,21 @@ final class AnalyticsApiControllerTest extends TestCase
         self::assertSame(2, $repository->analyticsOverview(7)['summary']['unique_emails']);
         self::assertSame(0, $repository->analyticsOverview(7, 'missing')['summary']['unique_emails']);
     }
+    public function testAuthorizationMethodAndFiltersAreValidatedBeforeOpeningStorage(): void
+    {
+        $opened = 0;
+        $factory = static function () use (&$opened): \formflow\SubmissionRepositoryInterface {
+            $opened++;
+            return new SqliteSubmissionRepository(':memory:');
+        };
+        $controller = new AnalyticsApiController($factory, 'secret');
+        self::assertSame(401, $controller->handle('GET', 'Bearer wrong', [])->status);
+        self::assertSame(405, $controller->handle('POST', 'Bearer secret', [])->status);
+        self::assertSame(422, $controller->handle('GET', 'Bearer secret', ['days' => []])->status);
+        self::assertSame(401, (new AnalyticsApiController($factory, ''))->handle('GET', 'Bearer ', [])->status);
+        self::assertSame(0, $opened);
+        self::assertSame(200, $controller->handle('GET', 'Bearer secret', [])->status);
+        self::assertSame(1, $opened);
+    }
+
 }

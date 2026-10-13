@@ -332,6 +332,50 @@ final class AdminControllerTest extends TestCase
         $this->assertSame(401, $result['status']);
     }
 
+    public function testDeletedAdminSessionRedirectsToLoginOnNextProtectedRequest(): void
+    {
+        $users = new SqliteAdminUserRepository(':memory:');
+        $users->create('admin', password_hash(self::PASSWORD, PASSWORD_BCRYPT, ['cost' => 4]));
+        $controller = $this->makeController(adminUsers: $users);
+        $this->login($controller);
+        $this->assertSame(200, $controller->handle('admin')['status']);
+        $users->delete($users->findByUsername('admin')['id']);
+
+        $response = $controller->handle('admin');
+        $this->assertSame(302, $response['status']);
+        $this->assertSame('/admin/login', $response['redirect']);
+        $this->assertArrayNotHasKey('admin_identity', $_SESSION);
+    }
+
+    public function testDevelopmentSessionRequiresLocalContextOnEveryProtectedRequest(): void
+    {
+        $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+        $controller = $this->makeController(['127.0.0.1', '203.0.113.10'], devLoginEnabled: true);
+        $controller->handle('admin/login');
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = ['dev_bypass' => '1', 'csrf_token' => $this->csrfToken()];
+        $this->assertSame(302, $controller->handle('admin/login')['status']);
+        $_SERVER['REQUEST_METHOD'] = 'GET';
+        $_POST = [];
+        $this->assertSame(200, $controller->handle('admin')['status']);
+        $_SERVER['REMOTE_ADDR'] = '203.0.113.10';
+        $this->assertSame('/admin/login', $controller->handle('admin')['redirect']);
+    }
+
+    public function testDisablingDevelopmentBypassRevokesExistingDevelopmentSession(): void
+    {
+        $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+        $controller = $this->makeController(['127.0.0.1'], devLoginEnabled: true);
+        $controller->handle('admin/login');
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = ['dev_bypass' => '1', 'csrf_token' => $this->csrfToken()];
+        $controller->handle('admin/login');
+        $_SERVER['REQUEST_METHOD'] = 'GET';
+        $_POST = [];
+        $disabled = $this->makeController(['127.0.0.1'], devLoginEnabled: false);
+        $this->assertSame('/admin/login', $disabled->handle('admin')['redirect']);
+    }
+
     public function testLoginLockoutReturns429AfterTooManyAttempts(): void
     {
         $controller = $this->makeController();

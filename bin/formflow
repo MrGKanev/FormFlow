@@ -10,6 +10,7 @@ use formflow\DeliveryAlertNotifier;
 use formflow\DeliveryMonitor;
 use formflow\WorkerHeartbeat;
 use formflow\MailDeliveryWorker;
+use formflow\MailRetryPolicy;
 use formflow\MailService;
 use formflow\SqliteFormRepository;
 use formflow\SqliteSubmissionRepository;
@@ -198,16 +199,18 @@ try {
                 getenv('MAIL_FROM') ?: '',
                 getenv('MAIL_FROM_NAME') ?: 'formflow'
             ),
-            new SqliteSubmissionRepository($databasePath, cliUploadDirectory($root))
+            new SqliteSubmissionRepository($databasePath, cliUploadDirectory($root)),
+            MailRetryPolicy::fromEnvironment()
         );
         $summary = $command === 'mail:work' ? $worker->process($limit) : $worker->retryFailed($limit);
 
         echo sprintf(
-            "%s attempted=%d sent=%d failed=%d skipped=%d\n",
+            "%s attempted=%d sent=%d failed=%d pending=%d skipped=%d\n",
             $command === 'mail:work' ? 'Mail worker' : 'Mail retry',
             $summary['attempted'],
             $summary['sent'],
             $summary['failed'],
+            $summary['pending'],
             $summary['skipped']
         );
         $heartbeat->completed('mail', $summary);

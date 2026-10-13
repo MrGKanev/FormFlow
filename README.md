@@ -154,6 +154,12 @@ Then run the mail worker from cron:
 php bin/formflow mail:work --limit=100
 ```
 
+New pending emails are processed before due failed emails. Automatic mail delivery consumes at most `MAIL_MAX_ATTEMPTS` (default 5) per cycle, including the first delivery attempt. Failed transports schedule exponential equal jitter: by default 30–60, 60–120, 120–240 and 240–480 seconds after successive failures. `MAIL_RETRY_BASE_DELAY_SECONDS` defaults to 60 and `MAIL_RETRY_MAX_DELAY_SECONDS` to 3600; the delay ceiling doubles up to that cap. Attempt counters and next-attempt timestamps persist across restarts. The worker does not sleep while waiting for a retry.
+
+Exhausted deliveries, invalid payloads and missing/invalid recipients are terminal until explicitly retried. `mail:retry-failed` and Admin **Resend** start a fresh budget and bypass scheduled waiting, while still respecting a live worker claim. A crash consumes an attempt; an abandoned final attempt is marked terminal after the 15-minute claim lease expires. Scheduled retries are reported as `pending`, and terminal outcomes as `failed`, in worker summaries. Admin delivery and submission pages show the current attempt count and next retry.
+
+Failed deliveries rotate by their last attempt so a broken item cannot continually occupy the first batch. Delivery remains at least once: a crash after SMTP acceptance can lead to a retry, so an exactly-once email guarantee is not provided.
+
 Each worker run records its status, summary, last run and last successful run under `storage/runtime`, which is shown on `/admin/system`. A successful worker run means the run completed without terminal delivery failures; pending retries and individual delivery outcomes are reported separately.
 
 Webhook delivery can stay synchronous, or be queued by setting:
@@ -189,7 +195,7 @@ php bin/formflow delivery:status
 php bin/formflow delivery:check
 ```
 
-Both commands emit JSON and exit with `0` when healthy or `1` when unhealthy. The snapshot includes pending/failed counts, the oldest pending delivery and its age, worker status and the last successful run. Pending work alerts when its age reaches `DELIVERY_QUEUE_MAX_AGE_SECONDS` (default 900), or a successful worker run is missing/stale according to `DELIVERY_WORKER_MAX_AGE_SECONDS` (default 900). Failed deliveries alert at `DELIVERY_FAILED_THRESHOLD` (default 1); a failed worker run also alerts.
+Both commands emit JSON and exit with `0` when healthy or `1` when unhealthy. The snapshot includes pending/failed counts, the oldest pending delivery and its age, worker status and the last successful run. Pending work alerts when its age reaches `DELIVERY_QUEUE_MAX_AGE_SECONDS` (default 900), or a successful worker run is missing/stale according to `DELIVERY_WORKER_MAX_AGE_SECONDS` (default 900). Failed deliveries alert at `DELIVERY_FAILED_THRESHOLD` (default 1); a failed worker run also alerts. A worker left running beyond `DELIVERY_WORKER_MAX_AGE_SECONDS` alerts even when its queue is empty, so crashed runs remain visible.
 
 For external monitoring, set a private random `OPERATIONS_API_TOKEN` and use HTTPS:
 
@@ -234,6 +240,8 @@ The included image serves `public/` through Apache with a read-only root filesys
 - `config/security.php` - global IP blocklist (exact IP addresses or IPv4 CIDR ranges).
 
 ## Protections
+
+Admin sessions are bound to the authenticated account ID and credential fingerprint. Deleting/recreating an account or changing its password/TOTP credentials requires re-login; legacy sessions without identity metadata also require re-login after this update. Development bypass sessions are accepted only while the controller still permits the local development context.
 
 Allowed origins/referer, honeypot field (`_website`), selectable CAPTCHA providers, per-form API key (generated with each new form and sent as a hidden field `_key`), rate limiting by IP+form with a configurable window, daily cap on submissions per form, global IP blocklist, simple case-insensitive spam filter by keywords/phrases.
 
@@ -308,6 +316,8 @@ keep it on your server and use HTTPS.
 curl 'https://forms.example.com/api/analytics?form_id=newsletter&days=30' \
   -H "Authorization: Bearer $ANALYTICS_API_TOKEN"
 ```
+
+Authorization, method and filters are checked before analytics storage is opened. A missing/unavailable database returns 503 and is not recreated by the endpoint.
 
 The read-only GET endpoint returns `days`, `form_id`, and `analytics` containing
 `summary`, `trend`, `statuses`, and `forms`. Summary counters include `total`,

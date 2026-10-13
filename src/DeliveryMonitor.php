@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace formflow;
 
 /**
- * @phpstan-type QueueStatus array{pending: int, failed: int, oldest_pending_at: string|null, oldest_pending_age_seconds: int|null, last_run: string|null, last_success: string|null, worker_age_seconds: int|null, worker_status: string, last_summary: array<string, int>}
+ * @phpstan-type QueueStatus array{pending: int, failed: int, oldest_pending_at: string|null, oldest_pending_age_seconds: int|null, last_run: string|null, last_success: string|null, worker_age_seconds: int|null, worker_status: string, worker_started_at: string|null, worker_run_age_seconds: int|null, last_summary: array<string, int>}
  * @phpstan-type DeliveryStatus array{healthy: bool, checked_at: string, mail: QueueStatus, webhooks: QueueStatus, alerts: list<string>}
  */
 final class DeliveryMonitor
@@ -49,6 +49,9 @@ final class DeliveryMonitor
                     $alerts[] = $name . ': no recent successful worker run.';
                 }
             }
+            if ($queue['worker_status'] === 'running' && ($queue['worker_run_age_seconds'] === null || $queue['worker_run_age_seconds'] >= max(1, $this->workerMaxAgeSeconds))) {
+                $alerts[] = $name . ': the worker is still running beyond its allowed age.';
+            }
             if ($queue['worker_status'] === 'failed') {
                 $alerts[] = $name . ': the last worker run failed.';
             }
@@ -61,6 +64,7 @@ final class DeliveryMonitor
     {
         $state = (new WorkerHeartbeat($this->root))->read($worker);
         $lastRun = is_string($state['last_run'] ?? null) ? $state['last_run'] : null;
+        $startedAt = is_string($state['started_at'] ?? null) ? $state['started_at'] : null;
         $lastSuccess = is_string($state['last_success'] ?? null) ? $state['last_success'] : null;
         $summary = [];
         if (is_array($state['summary'] ?? null)) {
@@ -77,6 +81,7 @@ final class DeliveryMonitor
             'last_run' => $lastRun, 'last_success' => $lastSuccess,
             'worker_age_seconds' => self::age($lastSuccess, $now),
             'worker_status' => is_string($state['status'] ?? null) ? $state['status'] : 'never',
+            'worker_started_at' => $startedAt, 'worker_run_age_seconds' => self::age($startedAt, $now),
             'last_summary' => $summary,
         ];
     }

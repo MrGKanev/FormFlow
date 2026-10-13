@@ -50,6 +50,19 @@ final class SqliteSubmissionRepositoryTest extends TestCase
         $this->assertSame('SMTP down', $row['error_message']);
     }
 
+    public function testSuccessfulClaimsRecordAttemptsWithoutUpdatingFailedClaims(): void
+    {
+        $repository = new SqliteSubmissionRepository(':memory:');
+        $id = $repository->create('contact', [], null, 'pending_mail');
+
+        $this->assertNull($repository->find($id)['mail_attempted_at']);
+        $this->assertTrue($repository->claim($id, 'pending_mail'));
+        $attemptedAt = $repository->find($id)['mail_attempted_at'];
+        $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}\+00:00$/', $attemptedAt);
+        $this->assertFalse($repository->claim($id, 'pending_mail'));
+        $this->assertSame($attemptedAt, $repository->find($id)['mail_attempted_at']);
+    }
+
     public function testCreateAcceptsCustomStatus(): void
     {
         $repository = new SqliteSubmissionRepository(':memory:');

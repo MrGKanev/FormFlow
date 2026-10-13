@@ -7,6 +7,9 @@ namespace formflow;
 final class AdminAuth
 {
     private const RATE_LIMIT_FORM_ID = 'admin_login';
+    /** @var array{type: string, id: int|string, username: string, fingerprint: string}|null */
+    private ?array $authenticatedIdentity = null;
+
     private const DUMMY_PASSWORD_HASH = '$2y$10$A0C6YT61Drgppvd0cfLsNeL6.tT2E5C8d29cIppAnPkf.sMWNL7CW';
 
     public function __construct(
@@ -24,15 +27,16 @@ final class AdminAuth
     /** @return 'ok'|'invalid'|'locked' */
     public function attemptLogin(string $username, string $password, ?string $ipHash, ?string $totpCode = null): string
     {
-        $this->rateLimiter->hit(self::RATE_LIMIT_FORM_ID, $ipHash);
-
-        $recentAttempts = $this->rateLimiter->countRecentHitsByIp(
+        $this->authenticatedIdentity = null;
+        $exceededLimit = $this->rateLimiter->consume(
             self::RATE_LIMIT_FORM_ID,
             $ipHash,
-            $this->windowMinutes
+            $this->windowMinutes,
+            $this->maxAttempts,
+            PHP_INT_MAX
         );
 
-        if ($recentAttempts > $this->maxAttempts) {
+        if ($exceededLimit !== null) {
             return 'locked';
         }
 
@@ -49,6 +53,13 @@ final class AdminAuth
                 return 'invalid';
             }
 
+            $this->authenticatedIdentity = [
+                'type' => 'stored',
+                'id' => $storedUser['id'],
+                'username' => $storedUser['username'],
+                'fingerprint' => $this->credentialFingerprint((string) $storedUser['password_hash'], $secret),
+            ];
+
             return 'ok';
         }
 
@@ -64,6 +75,8 @@ final class AdminAuth
         ) {
             return 'invalid';
         }
+
+        $this->authenticatedIdentity = $this->bootstrapIdentity();
 
         return 'ok';
     }
@@ -82,21 +95,75 @@ final class AdminAuth
 
     public function login(?string $username = null): void
     {
-        $_SESSION['admin_logged_in'] = true;
+        $identity = $this->authenticatedIdentity
+            ?? ($username === null && $this->adminPasswordHash !== '' ? $this->bootstrapIdentity() : null);
+        $this->authenticatedIdentity = null;
+        $this->logout();
 
-        if ($username !== null && $username !== '') {
-            $_SESSION['admin_username'] = $username;
+        if ($identity === null || ($username !== null && $identity['username'] !== $username)) {
+            return;
         }
+
+        $_SESSION['admin_logged_in'] = true;
+        $_SESSION['admin_username'] = $identity['username'];
+        $_SESSION['admin_identity'] = $identity;
     }
 
-    public function isLoggedIn(): bool
+    /** Only the controller may enable this context after checking the local runtime and client IP. */
+    public function loginDevelopment(): void
     {
-        return ($_SESSION['admin_logged_in'] ?? false) === true;
+        $this->logout();
+        $_SESSION['admin_logged_in'] = true;
+        $_SESSION['admin_username'] = 'dev-localhost';
+        $_SESSION['admin_identity'] = ['type' => 'development'];
+    }
+
+    public function isLoggedIn(bool $allowDevelopment = false): bool
+    {
+        $identity = $_SESSION['admin_identity'] ?? null;
+        $valid = false;
+
+        if (($_SESSION['admin_logged_in'] ?? false) === true && is_array($identity)) {
+            if (($identity['type'] ?? null) === 'development') {
+                $valid = $allowDevelopment;
+            } elseif (($identity['type'] ?? null) === 'bootstrap') {
+                $current = $this->bootstrapIdentity();
+                $valid = $this->adminPasswordHash !== ''
+                    && ($identity['id'] ?? null) === $current['id']
+                    && ($identity['username'] ?? null) === $current['username']
+                    && is_string($identity['fingerprint'] ?? null)
+                    && hash_equals($current['fingerprint'], $identity['fingerprint']);
+            } elseif (($identity['type'] ?? null) === 'stored' && is_string($identity['username'] ?? null)) {
+                $user = $this->users?->findByUsername($identity['username']);
+                $valid = $user !== null && ($identity['id'] ?? null) === $user['id']
+                    && is_string($identity['fingerprint'] ?? null)
+                    && hash_equals($this->credentialFingerprint($user['password_hash'], (string) ($user['totp_secret'] ?? '')), $identity['fingerprint']);
+            }
+        }
+
+        if (!$valid) {
+            $this->logout();
+        }
+
+        return $valid;
+    }
+
+    /** @return array{type: string, id: string, username: string, fingerprint: string} */
+    private function bootstrapIdentity(): array
+    {
+        return ['type' => 'bootstrap', 'id' => $this->adminUsername, 'username' => $this->adminUsername,
+            'fingerprint' => $this->credentialFingerprint($this->adminPasswordHash, $this->bootstrapTotpSecret)];
+    }
+
+    private function credentialFingerprint(string $passwordHash, string $totpSecret): string
+    {
+        return hash('sha256', json_encode([$passwordHash, $totpSecret], JSON_THROW_ON_ERROR));
     }
 
     public function logout(): void
     {
-        unset($_SESSION['admin_logged_in'], $_SESSION['admin_username']);
+        $this->authenticatedIdentity = null;
+        unset($_SESSION['admin_logged_in'], $_SESSION['admin_username'], $_SESSION['admin_identity']);
     }
 
     public function username(): ?string

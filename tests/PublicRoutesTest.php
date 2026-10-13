@@ -43,6 +43,40 @@ final class PublicRoutesTest extends TestCase
         $this->assertStringNotContainsString('<a href="/admin"', $output);
     }
 
+    public function testAnalyticsRouteRejectsRequestsWithoutCreatingMissingDatabase(): void
+    {
+        file_put_contents($this->root . '/.env', "APP_ENV='test'\n");
+        foreach ([
+            ['', '', 'GET', [], 401],
+            ['secret', 'Bearer wrong', 'GET', [], 401],
+            ['secret', 'Bearer secret', 'POST', [], 405],
+            ['secret', 'Bearer secret', 'GET', ['days' => 'invalid'], 422],
+            ['secret', 'Bearer secret', 'GET', [], 503],
+        ] as [$token, $header, $method, $query, $expected]) {
+            [$exit, $output, $error] = $this->request('/api/analytics', ['HTTP_AUTHORIZATION' => $header, 'REQUEST_METHOD' => $method], $query, $this->root,
+                ['ANALYTICS_API_TOKEN' => $token, 'DATABASE_PATH' => 'storage/submissions.sqlite'], true);
+            self::assertSame(0, $exit, $error);
+            $response = json_decode($output, true, 512, JSON_THROW_ON_ERROR);
+            self::assertSame($expected, $response['status']);
+            self::assertArrayHasKey('error', $response['body']);
+            self::assertFileDoesNotExist($this->root . '/storage/submissions.sqlite');
+        }
+    }
+
+    public function testAnalyticsRouteReadsExistingDatabaseAfterAuthorization(): void
+    {
+        file_put_contents($this->root . '/.env', "APP_ENV='test'\n");
+        $repository = new SqliteSubmissionRepository($this->root . '/storage/submissions.sqlite');
+        $repository->create('contact', ['message' => 'private text'], null, 'sent');
+        [$exit, $output, $error] = $this->request('/api/analytics', ['REDIRECT_HTTP_AUTHORIZATION' => 'Bearer secret'], [], $this->root,
+            ['ANALYTICS_API_TOKEN' => 'secret', 'DATABASE_PATH' => 'storage/submissions.sqlite'], true);
+        self::assertSame(0, $exit, $error);
+        $response = json_decode($output, true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame(200, $response['status']);
+        self::assertSame(1, $response['body']['analytics']['summary']['total']);
+        self::assertStringNotContainsString('private text', $output);
+    }
+
     public function testDeliveryStatusRouteAuthenticatesBeforeOpeningDatabase(): void
     {
         file_put_contents($this->root . '/.env', "APP_ENV='test'\n");

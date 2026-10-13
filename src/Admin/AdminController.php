@@ -101,7 +101,7 @@ final class AdminController
             return HttpResponse::fromArray($this->handleRecovery());
         }
 
-        if (!$this->auth->isLoggedIn()) {
+        if (!$this->auth->isLoggedIn($this->canUseDevBypass())) {
             return HttpResponse::redirect('/admin/login');
         }
 
@@ -158,7 +158,7 @@ final class AdminController
     private function handleLogin(): array
     {
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-            if ($this->auth->isLoggedIn()) {
+            if ($this->auth->isLoggedIn($this->canUseDevBypass())) {
                 return ['status' => 302, 'body' => '', 'redirect' => '/admin'];
             }
 
@@ -171,7 +171,7 @@ final class AdminController
 
         if (($_POST['dev_bypass'] ?? null) && $this->canUseDevBypass()) {
             session_regenerate_id(true);
-            $this->auth->login('dev-localhost');
+            $this->auth->loginDevelopment();
 
             return ['status' => 302, 'body' => '', 'redirect' => '/admin'];
         }

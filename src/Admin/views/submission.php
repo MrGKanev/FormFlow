@@ -59,6 +59,16 @@ $statusClass = 'status-' . preg_replace('/[^a-z0-9_-]+/i', '-', strtolower($subm
         <tbody>
             <tr><th>Form</th><td><?= htmlspecialchars((string) $submission['form_id'], ENT_QUOTES, 'UTF-8') ?></td></tr>
             <tr><th>Status</th><td><span class="status-pill <?= htmlspecialchars($statusClass, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($submissionStatus, ENT_QUOTES, 'UTF-8') ?></span></td></tr>
+            <?php if (array_key_exists('mail_attempts', $submission)): ?>
+                <tr><th>Email attempts</th><td><?= (int) $submission['mail_attempts'] ?></td></tr>
+                <tr><th>Email retry</th><td>
+                    <?php if ($submissionStatus === 'sent'): ?>Delivered
+                    <?php elseif (!empty($submission['mail_next_attempt_at'])): ?>Next retry: <?= htmlspecialchars((string) $submission['mail_next_attempt_at'], ENT_QUOTES, 'UTF-8') ?>
+                    <?php elseif ($submissionStatus === 'failed' && empty($submission['mail_retryable'])): ?>Stopped — manual resend available
+                    <?php elseif (in_array($submissionStatus, ['pending_mail', 'failed'], true)): ?>Waiting for worker
+                    <?php else: ?>Not scheduled<?php endif; ?>
+                </td></tr>
+            <?php endif; ?>
             <tr><th>Created</th><td><time datetime="<?= htmlspecialchars((string) $submission['created_at'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $submission['created_at'], ENT_QUOTES, 'UTF-8') ?></time></td></tr>
             <tr><th>Sent</th><td><?= !empty($submission['sent_at']) ? htmlspecialchars((string) $submission['sent_at'], ENT_QUOTES, 'UTF-8') : '<span class="muted">Not sent</span>' ?></td></tr>
             <tr><th>Reviewed</th><td><?= !empty($submission['reviewed_at']) ? htmlspecialchars((string) $submission['reviewed_at'], ENT_QUOTES, 'UTF-8') : '<span class="muted">Not reviewed</span>' ?></td></tr>

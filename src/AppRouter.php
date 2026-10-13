@@ -86,14 +86,27 @@ final class AppRouter
 
         if ($formId === 'api/analytics') {
             $controller = new AnalyticsApiController(
-                new SqliteSubmissionRepository($this->factory->databasePath()),
+                function (): SubmissionRepositoryInterface {
+                    $database = $this->factory->databasePath();
+                    if (!is_file($database)) {
+                        throw new \RuntimeException('Analytics database is unavailable.');
+                    }
+                    return new SqliteSubmissionRepository($database);
+                },
                 (string) (getenv('ANALYTICS_API_TOKEN') ?: '')
             );
-            $response = $controller->handle(
-                (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'),
-                (string) ($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? ''),
-                $_GET
-            );
+            try {
+                $response = $controller->handle(
+                    (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'),
+                    (string) ($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? ''),
+                    $_GET
+                );
+            } catch (Throwable $exception) {
+                error_log($exception->__toString());
+                $response = new HttpResponse(503, ['error' => 'Analytics is temporarily unavailable.'], headers: [
+                    'Content-Type' => 'application/json; charset=utf-8', 'Cache-Control' => 'no-store',
+                ]);
+            }
             http_response_code($response->status);
             foreach ($response->headers as $name => $value) {
                 header($name . ': ' . $value);

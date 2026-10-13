@@ -69,4 +69,28 @@ final class DeliveryMonitorTest extends TestCase
             self::assertFalse($status['healthy']);
         }
     }
+    public function testAbandonedRunningWorkersAlertEvenWhenQueuesAreEmpty(): void
+    {
+        $monitor = new DeliveryMonitor(new SqliteSubmissionRepository(':memory:'), null, $this->root, 60, 60);
+        $now = strtotime('2026-10-13T12:00:00Z');
+        foreach (['mail', 'webhooks'] as $worker) {
+            foreach ([gmdate('c', $now - 60), 'broken', gmdate('c', $now + 60)] as $startedAt) {
+                $this->heartbeat($worker, ['status' => 'running', 'started_at' => $startedAt]);
+                $status = $monitor->snapshot($now);
+                self::assertFalse($status['healthy']);
+                self::assertStringContainsString($worker . ': the worker is still running beyond its allowed age.', implode(' ', $status['alerts']));
+            }
+            unlink($this->root . '/storage/runtime/' . $worker . '-status.json');
+        }
+    }
+
+    public function testRecentRunningWorkerWithNoPendingWorkIsHealthy(): void
+    {
+        $now = strtotime('2026-10-13T12:00:00Z');
+        $this->heartbeat('mail', ['status' => 'running', 'started_at' => gmdate('c', $now - 59)]);
+        $status = (new DeliveryMonitor(new SqliteSubmissionRepository(':memory:'), null, $this->root, 60, 60))->snapshot($now);
+        self::assertTrue($status['healthy']);
+        self::assertSame([], $status['alerts']);
+    }
+
 }
